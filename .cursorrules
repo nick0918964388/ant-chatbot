@@ -1,0 +1,95 @@
+my-nextjs-app/
+├── public/
+│   ├── images/
+│   ├── fonts/
+│   └── favicon.ico
+├── src/
+│   ├── components/
+│   │   ├── common/
+│   │   ├── layout/
+│   │   └── ui/
+│   ├── pages/
+│   │   ├── api/
+│   │   ├── _app.tsx
+│   │   ├── _document.tsx
+│   │   └── index.tsx
+│   ├── styles/
+│   │   ├── globals.css
+│   │   ├── variables.css
+│   │   └── [其他 CSS/SCSS 文件]
+│   ├── hooks/
+│   ├── lib/
+│   ├── utils/
+│   ├── context/
+│   ├── services/
+│   ├── types/
+│   └── assets/
+│       ├── images/
+│       ├── icons/
+│       └── [其他靜態資源]
+├── .env.local
+├── next.config.js
+├── tsconfig.json
+├── package.json
+├── README.md
+└── [其他配置檔案]
+資料夾與檔案說明
+public/
+存放靜態資源，如圖片、字型、favicon 等。這些檔案會被直接提供給客戶端訪問，無需透過 Webpack 打包。
+
+src/
+專案的主要開發目錄，將所有程式碼集中在此處，使結構更清晰。
+
+components/
+放置可重用的 React 組件。
+
+common/: 通用組件，例如按鈕、輸入框等。
+layout/: 佈局相關的組件，如 Header、Footer、Sidebar 等。
+ui/: UI 元素，如模態窗口、通知等。
+pages/
+Next.js 的路由系統依賴於 pages 目錄內的檔案結構。
+
+api/: API 路由，用於建立伺服器端的 API 端點。
+_app.tsx: 用於覆寫應用程式的根組件，常用來包裹全局樣式或上下文。
+_document.tsx: 用於自訂 HTML 文件結構，通常用於設定 lang 屬性、引入第三方腳本等。
+index.tsx: 主頁的組件。
+styles/
+存放全局樣式和變數。
+
+globals.css: 全局 CSS 樣式。
+variables.css: CSS 變數或 SASS 變數。
+hooks/
+存放自訂的 React Hook，提高重用性和組織性。
+
+lib/
+放置與第三方庫整合或應用層邏輯相關的程式碼，例如 API 客戶端設置、資料庫連接等。
+
+utils/
+工具函數和輔助函數，這些函數通常是純函數並可在多處使用。
+
+context/
+React Context 的提供者和消費者，管理全局狀態。
+
+services/
+與後端服務或外部 API 交互的邏輯，例如 GraphQL 客戶端設置、REST API 請求等。
+
+types/
+TypeScript 的類型定義，保持類型的集中與可管理性。
+
+assets/
+其他靜態資源，如 SVG 圖標、影片等。
+
+.env.local
+環境變數配置檔案，用於存放開發環境中的敏感資料，例如 API 金鑰。
+
+next.config.js
+Next.js 的配置檔案，可以用來自訂 Webpack 配置、環境變數等。
+
+tsconfig.json
+TypeScript 的配置檔案，用於設定編譯選項、路徑別名等。
+
+package.json
+專案的依賴、腳本和其他元數據。
+
+README.md
+專案的說明文件，包含安裝步驟、使用方法、專案結構說明等。
