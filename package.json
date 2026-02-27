@@ -12,9 +12,12 @@
     "@ant-design/nextjs-registry": "^1.0.2",
     "@ant-design/x": "^1.0.4",
     "antd-style": "^3.7.1",
+    "dayjs": "^1.11.19",
     "next": "15.1.4",
     "react": "^19.0.0",
-    "react-dom": "^19.0.0"
+    "react-dom": "^19.0.0",
+    "recharts": "^3.7.0",
+    "yahoo-finance2": "^3.13.1"
   },
   "devDependencies": {
     "@eslint/eslintrc": "^3",

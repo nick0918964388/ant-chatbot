@@ -1,0 +1,353 @@
+'use client';
+
+import React, { useEffect, useState, useCallback } from 'react';
+import {
+  LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
+  CartesianGrid, ReferenceLine, Area, AreaChart, ComposedChart,
+  Bar, Legend,
+} from 'recharts';
+import dayjs from 'dayjs';
+import type { BacktestResult, Trade } from '@/lib/backtest/types';
+
+// ============================================================
+// 格式化工具
+// ============================================================
+const fmt = {
+  money: (v: number) => {
+    if (Math.abs(v) >= 1e8) return `${(v / 1e8).toFixed(2)}億`;
+    if (Math.abs(v) >= 1e4) return `${(v / 1e4).toFixed(1)}萬`;
+    return v.toLocaleString();
+  },
+  pct: (v: number) => `${(v * 100).toFixed(2)}%`,
+  price: (v: number) => v.toFixed(0),
+  date: (d: string) => dayjs(d).format('MM/DD'),
+  fullDate: (d: string) => dayjs(d).format('YYYY/MM/DD'),
+};
+
+// ============================================================
+// 自訂 Tooltip
+// ============================================================
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) {
+  if (!active || !payload?.length) return null;
+  return (
+    <div style={{
+      background: 'rgba(15, 23, 42, 0.95)', padding: '10px 14px', borderRadius: 8,
+      border: '1px solid rgba(148,163,184,0.2)', fontSize: 13,
+    }}>
+      <div style={{ color: '#94a3b8', marginBottom: 4 }}>{label}</div>
+      {payload.map((p, i) => (
+        <div key={i} style={{ color: p.color, margin: '2px 0' }}>
+          {p.name}: <strong>{typeof p.value === 'number' && p.name.includes('率') ? fmt.pct(p.value) : typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
+        </div>
+      ))}
+    </div>
+  );
+}
+
+// ============================================================
+// 指標卡片
+// ============================================================
+function MetricCard({ label, value, sub, color }: { label: string; value: string; sub?: string; color?: string }) {
+  return (
+    <div style={{
+      background: 'rgba(30, 41, 59, 0.8)', borderRadius: 12, padding: '16px 20px',
+      border: '1px solid rgba(148,163,184,0.1)', flex: '1 1 180px', minWidth: 160,
+    }}>
+      <div style={{ color: '#94a3b8', fontSize: 13, marginBottom: 6 }}>{label}</div>
+      <div style={{ color: color || '#f1f5f9', fontSize: 22, fontWeight: 700 }}>{value}</div>
+      {sub && <div style={{ color: '#64748b', fontSize: 12, marginTop: 4 }}>{sub}</div>}
+    </div>
+  );
+}
+
+// ============================================================
+// 交易紀錄表
+// ============================================================
+function TradeTable({ trades }: { trades: Trade[] }) {
+  const typeColor: Record<string, string> = {
+    ENTRY: '#3b82f6', ADD: '#22c55e', STOP_LOSS: '#ef4444', REENTRY: '#a855f7',
+  };
+  const typeLabel: Record<string, string> = {
+    ENTRY: '初始入場', ADD: '獲利加碼', STOP_LOSS: '停損出場', REENTRY: '重新入場',
+  };
+
+  return (
+    <div style={{ overflowX: 'auto' }}>
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: 13 }}>
+        <thead>
+          <tr style={{ borderBottom: '1px solid rgba(148,163,184,0.2)' }}>
+            {['日期', '類型', '價格', '口數', '持倉', '損益', '說明'].map(h => (
+              <th key={h} style={{ padding: '10px 12px', color: '#94a3b8', fontWeight: 600, textAlign: 'left' }}>{h}</th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {trades.map((t, i) => (
+            <tr key={i} style={{ borderBottom: '1px solid rgba(148,163,184,0.08)' }}>
+              <td style={{ padding: '8px 12px', color: '#e2e8f0' }}>{fmt.fullDate(t.date)}</td>
+              <td style={{ padding: '8px 12px' }}>
+                <span style={{
+                  color: typeColor[t.type], fontWeight: 600,
+                  background: `${typeColor[t.type]}15`, padding: '2px 8px', borderRadius: 4,
+                }}>{typeLabel[t.type]}</span>
+              </td>
+              <td style={{ padding: '8px 12px', color: '#e2e8f0' }}>{fmt.price(t.price)}</td>
+              <td style={{ padding: '8px 12px', color: t.contracts > 0 ? '#22c55e' : '#ef4444' }}>
+                {t.contracts > 0 ? `+${t.contracts}` : t.contracts}
+              </td>
+              <td style={{ padding: '8px 12px', color: '#e2e8f0' }}>{t.totalContracts}</td>
+              <td style={{ padding: '8px 12px', color: t.pnl != null ? (t.pnl >= 0 ? '#22c55e' : '#ef4444') : '#64748b' }}>
+                {t.pnl != null ? `${t.pnl >= 0 ? '+' : ''}${fmt.money(t.pnl)}` : '-'}
+              </td>
+              <td style={{ padding: '8px 12px', color: '#94a3b8', maxWidth: 300 }}>{t.reason}</td>
+            </tr>
+          ))}
+        </tbody>
+      </table>
+    </div>
+  );
+}
+
+// ============================================================
+// 主頁面
+// ============================================================
+export default function BacktestPage() {
+  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchBacktest = useCallback(async () => {
+    setLoading(true);
+    setError(null);
+    try {
+      const res = await fetch('/api/backtest');
+      if (!res.ok) {
+        const err = await res.json();
+        throw new Error(err.error || 'API error');
+      }
+      const data: BacktestResult = await res.json();
+      setResult(data);
+    } catch (e) {
+      setError(e instanceof Error ? e.message : 'Unknown error');
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  useEffect(() => { fetchBacktest(); }, [fetchBacktest]);
+
+  if (loading) {
+    return (
+      <div style={containerStyle}>
+        <div style={{ textAlign: 'center', padding: '120px 0' }}>
+          <div style={{ fontSize: 32, marginBottom: 16 }}>Loading...</div>
+          <div style={{ color: '#94a3b8' }}>正在從 Yahoo Finance 取得台指加權指數資料並執行回測...</div>
+        </div>
+      </div>
+    );
+  }
+
+  if (error || !result) {
+    return (
+      <div style={containerStyle}>
+        <div style={{ textAlign: 'center', padding: '120px 0' }}>
+          <div style={{ fontSize: 24, color: '#ef4444', marginBottom: 16 }}>回測失敗</div>
+          <div style={{ color: '#94a3b8', marginBottom: 24 }}>{error}</div>
+          <button onClick={fetchBacktest} style={btnStyle}>重新執行</button>
+        </div>
+      </div>
+    );
+  }
+
+  const { metrics: m, snapshots, trades, config } = result;
+
+  // 準備圖表資料
+  const chartData = snapshots.map(s => ({
+    date: fmt.date(s.date),
+    fullDate: fmt.fullDate(s.date),
+    close: s.close,
+    equity: Math.round(s.equity),
+    contracts: s.contracts,
+    unrealizedPnl: Math.round(s.unrealizedPnl),
+    drawdownPct: s.priceFromPeak,
+    threshold: s.drawdownThreshold,
+    state: s.state,
+  }));
+
+  // 權益回撤資料
+  let eqPeak = config.initialCapital;
+  const ddData = snapshots.map(s => {
+    if (s.equity > eqPeak) eqPeak = s.equity;
+    const dd = eqPeak > 0 ? (eqPeak - s.equity) / eqPeak : 0;
+    return { date: fmt.date(s.date), drawdown: -dd };
+  });
+
+  const pnlColor = m.totalPnl >= 0 ? '#22c55e' : '#ef4444';
+
+  return (
+    <div style={containerStyle}>
+      {/* 標題 */}
+      <div style={{ marginBottom: 32 }}>
+        <h1 style={{ fontSize: 28, fontWeight: 800, color: '#f1f5f9', margin: 0 }}>
+          台指期回測策略
+        </h1>
+        <p style={{ color: '#94a3b8', marginTop: 8, fontSize: 14 }}>
+          {config.contractType === 'TX' ? '大台' : '小台'} | 起始資金 {fmt.money(config.initialCapital)} |
+          每獲利 {fmt.money(config.profitPerContract)} 加碼一口 |
+          停損: {(config.baseDrawdownPct * 100).toFixed(0)}% - (口數×{(config.contractDrawdownPenalty * 100).toFixed(0)}%) |
+          回漲 {(config.reentryRecoveryPct * 100).toFixed(0)}% 重新入場 |
+          {fmt.fullDate(m.startDate)} ~ {fmt.fullDate(m.endDate)}
+        </p>
+      </div>
+
+      {/* 指標卡片 */}
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 32 }}>
+        <MetricCard label="總報酬率" value={fmt.pct(m.totalReturn)} color={pnlColor} sub={`損益 ${m.totalPnl >= 0 ? '+' : ''}${fmt.money(m.totalPnl)}`} />
+        <MetricCard label="最終權益" value={fmt.money(m.finalEquity)} sub={`最高 ${fmt.money(m.maxEquity)}`} />
+        <MetricCard label="最大回撤" value={fmt.pct(m.maxDrawdownPct)} color="#ef4444" sub={`金額 ${fmt.money(m.maxDrawdown)}`} />
+        <MetricCard label="交易天數" value={`${m.tradingDays}`} sub={`${m.totalTrades} 筆交易`} />
+        <MetricCard label="停損次數" value={`${m.stopLossCount}`} color="#f59e0b" sub={`重入場 ${m.reentryCount} 次`} />
+        <MetricCard label="最大持倉" value={`${m.maxContracts} 口`} sub={`合約: ${config.contractType}`} />
+      </div>
+
+      {/* 台指加權指數走勢 + 交易信號 */}
+      <Section title="台指加權指數走勢">
+        <ResponsiveContainer width="100%" height={350}>
+          <ComposedChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+            <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(chartData.length / 10)} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} domain={['auto', 'auto']} />
+            <Tooltip content={<ChartTooltip />} />
+            <Line type="monotone" dataKey="close" stroke="#3b82f6" strokeWidth={2} dot={false} name="收盤價" />
+            {/* 交易標記 */}
+            {trades.map((t, i) => (
+              <ReferenceLine
+                key={i}
+                x={fmt.date(t.date)}
+                stroke={t.type === 'STOP_LOSS' ? '#ef4444' : t.type === 'ADD' ? '#22c55e' : '#a855f7'}
+                strokeDasharray="3 3"
+                strokeWidth={1}
+              />
+            ))}
+          </ComposedChart>
+        </ResponsiveContainer>
+      </Section>
+
+      {/* 權益曲線 */}
+      <Section title="權益曲線">
+        <ResponsiveContainer width="100%" height={300}>
+          <AreaChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+            <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(chartData.length / 10)} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} />
+            <Tooltip content={<ChartTooltip />} />
+            <defs>
+              <linearGradient id="eqGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#22c55e" stopOpacity={0.3} />
+                <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="equity" stroke="#22c55e" fill="url(#eqGrad)" strokeWidth={2} name="權益" />
+            <ReferenceLine y={config.initialCapital} stroke="#64748b" strokeDasharray="5 5" label={{ value: '初始資金', fill: '#64748b', fontSize: 11 }} />
+          </AreaChart>
+        </ResponsiveContainer>
+      </Section>
+
+      {/* 持倉口數 */}
+      <Section title="持倉口數變化">
+        <ResponsiveContainer width="100%" height={200}>
+          <ComposedChart data={chartData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+            <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(chartData.length / 10)} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} allowDecimals={false} />
+            <Tooltip content={<ChartTooltip />} />
+            <Bar dataKey="contracts" fill="#6366f1" name="持倉口數" opacity={0.7} />
+          </ComposedChart>
+        </ResponsiveContainer>
+      </Section>
+
+      {/* 權益回撤 */}
+      <Section title="權益回撤">
+        <ResponsiveContainer width="100%" height={200}>
+          <AreaChart data={ddData}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+            <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(ddData.length / 10)} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+            <Tooltip content={<ChartTooltip />} />
+            <defs>
+              <linearGradient id="ddGrad" x1="0" y1="0" x2="0" y2="1">
+                <stop offset="5%" stopColor="#ef4444" stopOpacity={0} />
+                <stop offset="95%" stopColor="#ef4444" stopOpacity={0.3} />
+              </linearGradient>
+            </defs>
+            <Area type="monotone" dataKey="drawdown" stroke="#ef4444" fill="url(#ddGrad)" strokeWidth={2} name="回撤率" />
+          </AreaChart>
+        </ResponsiveContainer>
+      </Section>
+
+      {/* 價格回撤 vs 停損門檻 */}
+      <Section title="價格回撤 vs 停損門檻">
+        <ResponsiveContainer width="100%" height={250}>
+          <LineChart data={chartData.filter(d => d.state === 'HOLDING' || d.drawdownPct > 0)}>
+            <CartesianGrid strokeDasharray="3 3" stroke="rgba(148,163,184,0.1)" />
+            <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(chartData.length / 12)} />
+            <YAxis tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
+            <Tooltip content={<ChartTooltip />} />
+            <Legend />
+            <Line type="stepAfter" dataKey="threshold" stroke="#f59e0b" strokeWidth={2} dot={false} name="停損門檻" strokeDasharray="5 5" />
+            <Line type="monotone" dataKey="drawdownPct" stroke="#ef4444" strokeWidth={1.5} dot={false} name="價格回撤" />
+          </LineChart>
+        </ResponsiveContainer>
+      </Section>
+
+      {/* 交易紀錄 */}
+      <Section title="交易紀錄">
+        <TradeTable trades={trades} />
+      </Section>
+
+      {/* 底部資訊 */}
+      <div style={{ textAlign: 'center', color: '#475569', fontSize: 12, padding: '32px 0 16px', borderTop: '1px solid rgba(148,163,184,0.1)' }}>
+        資料來源: Yahoo Finance (^TWII 台灣加權指數) | 回測結果僅供參考，不構成投資建議
+      </div>
+    </div>
+  );
+}
+
+// ============================================================
+// 區塊元件
+// ============================================================
+function Section({ title, children }: { title: string; children: React.ReactNode }) {
+  return (
+    <div style={{
+      background: 'rgba(30, 41, 59, 0.5)', borderRadius: 12, padding: 24,
+      border: '1px solid rgba(148,163,184,0.1)', marginBottom: 24,
+    }}>
+      <h2 style={{ fontSize: 16, fontWeight: 700, color: '#e2e8f0', marginBottom: 16, marginTop: 0 }}>{title}</h2>
+      {children}
+    </div>
+  );
+}
+
+// ============================================================
+// 共用樣式
+// ============================================================
+const containerStyle: React.CSSProperties = {
+  maxWidth: 1100,
+  margin: '0 auto',
+  padding: '32px 24px',
+  fontFamily: '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif',
+  background: '#0f172a',
+  minHeight: '100vh',
+  color: '#f1f5f9',
+};
+
+const btnStyle: React.CSSProperties = {
+  background: '#3b82f6',
+  color: 'white',
+  border: 'none',
+  padding: '10px 24px',
+  borderRadius: 8,
+  cursor: 'pointer',
+  fontSize: 14,
+  fontWeight: 600,
+};

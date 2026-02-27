@@ -1,10 +1,11 @@
 'use client';
 
-import { useState } from 'react';
-import Indepentent from './indepentent';
+import dynamic from 'next/dynamic';
+
+const Indepentent = dynamic(() => import('./indepentent'), { ssr: false });
 
 export default function ChatBot() {
-  
+
   return (
     <div className="h-screen flex flex-col">
       <div className="flex-1 p-4">

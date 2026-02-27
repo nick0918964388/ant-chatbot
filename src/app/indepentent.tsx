@@ -5,13 +5,11 @@ import {
     BubbleProps,
     Conversations,
     Prompts,
-    PromptProps,
     Sender,
     Welcome,
     useXAgent,
     useXChat,
   } from '@ant-design/x';
-import { createStyles } from 'antd-style';
 import React, { useEffect } from 'react';
 import {
   CloudUploadOutlined,
@@ -27,7 +25,7 @@ import {
   ShareAltOutlined,
   SmileOutlined,
 } from '@ant-design/icons';
-import { Badge, Button, Space, Upload } from 'antd';
+import { Badge, Button, Space } from 'antd';
 import type { UploadChangeParam, UploadFile } from 'antd/es/upload';
 import { useStyle } from './styles/independent.styles';
 
@@ -140,6 +138,7 @@ const Independent = () => {
     const [content, setContent] = React.useState('');
     const [conversationsItems, setConversationsItems] = React.useState(defaultConversationsItems);
     const [activeKey, setActiveKey] = React.useState(defaultConversationsItems[0].key);
+    // eslint-disable-next-line @typescript-eslint/no-explicit-any
     const [attachedFiles, setAttachedFiles] = React.useState<UploadFile<any>[]>([]);
   
     // ==================== Runtime ====================
