@@ -19,10 +19,14 @@ function calcTargetContracts(realizedPnl: number, config: BacktestConfig): numbe
 }
 
 /**
- * 計算停損門檻：30% - (口數 * 5%)
- * 最低不小於 5%，避免門檻為零或負數
+ * 計算停損門檻（兩階段）
+ * - 尚無獲利時：初期停損 10%
+ * - 有獲利後：30% - (口數 * 5%)，最低不小於 5%
  */
-function calcDrawdownThreshold(contracts: number, config: BacktestConfig): number {
+function calcDrawdownThreshold(contracts: number, hasProfit: boolean, config: BacktestConfig): number {
+  if (!hasProfit) {
+    return config.initialDrawdownPct; // 初期 10%
+  }
   const threshold = config.baseDrawdownPct - contracts * config.contractDrawdownPenalty;
   return Math.max(threshold, 0.05);
 }
@@ -94,8 +98,11 @@ export function runBacktest(
         maxEquity = equity;
       }
 
-      // 計算停損門檻
-      const drawdownThreshold = calcDrawdownThreshold(contracts, config);
+      // 判斷是否已有獲利（權益 > 初始資金）
+      const hasProfit = equity > config.initialCapital;
+
+      // 計算停損門檻：初期10%，有獲利後 30%-(口數×5%)
+      const drawdownThreshold = calcDrawdownThreshold(contracts, hasProfit, config);
       const priceDrawdownPct = pricePeak > 0 ? (pricePeak - close) / pricePeak : 0;
 
       // 檢查是否觸發停損（價格從峰值回撤超過門檻）
@@ -107,13 +114,14 @@ export function runBacktest(
         // 記錄本輪損益
         roundPnls.push(realizedPnl - (roundEntryEquity - config.initialCapital));
 
+        const phaseLabel = hasProfit ? `獲利階段 ${(drawdownThreshold * 100).toFixed(1)}%` : `初期 ${(config.initialDrawdownPct * 100).toFixed(0)}%`;
         trades.push({
           type: 'STOP_LOSS',
           date: day.date,
           price: close,
           contracts: -contracts,
           totalContracts: 0,
-          reason: `停損出場！價格從峰值 ${pricePeak.toFixed(0)} 回撤 ${(priceDrawdownPct * 100).toFixed(1)}% >= 門檻 ${(drawdownThreshold * 100).toFixed(1)}% (${contracts}口)`,
+          reason: `停損出場！價格從峰值 ${pricePeak.toFixed(0)} 回撤 ${(priceDrawdownPct * 100).toFixed(1)}% >= 門檻 ${(drawdownThreshold * 100).toFixed(1)}% [${phaseLabel}] (${contracts}口)`,
           pnl: closePnl,
         });
 
@@ -164,7 +172,7 @@ export function runBacktest(
         realizedPnl,
         equity: config.initialCapital + realizedPnl + snapshotUnrealizedPnl,
         priceFromPeak: pricePeak > 0 ? (pricePeak - close) / pricePeak : 0,
-        drawdownThreshold: calcDrawdownThreshold(Math.max(contracts, 1), config),
+        drawdownThreshold: calcDrawdownThreshold(Math.max(contracts, 1), equity > config.initialCapital, config),
         pricePeak,
         priceLow,
       });

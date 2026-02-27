@@ -194,7 +194,7 @@ export default function BacktestPage() {
         <p style={{ color: '#94a3b8', marginTop: 8, fontSize: 14 }}>
           {config.contractType === 'TX' ? '大台' : '小台'} | 起始資金 {fmt.money(config.initialCapital)} |
           每獲利 {fmt.money(config.profitPerContract)} 加碼一口 |
-          停損: {(config.baseDrawdownPct * 100).toFixed(0)}% - (口數×{(config.contractDrawdownPenalty * 100).toFixed(0)}%) |
+          初期停損 {(config.initialDrawdownPct * 100).toFixed(0)}% → 獲利後 {(config.baseDrawdownPct * 100).toFixed(0)}%-(口數×{(config.contractDrawdownPenalty * 100).toFixed(0)}%) |
           回漲 {(config.reentryRecoveryPct * 100).toFixed(0)}% 重新入場 |
           {fmt.fullDate(m.startDate)} ~ {fmt.fullDate(m.endDate)}
         </p>

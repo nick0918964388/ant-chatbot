@@ -66,7 +66,8 @@ export interface BacktestConfig {
   contractMultiplier: number;   // 每點價值 (大台=200, 小台=50)
   contractType: 'TX' | 'MTX';  // 合約類型
   profitPerContract: number;    // 每獲利多少加碼一口
-  baseDrawdownPct: number;      // 基礎回撤停損比例 (30%)
+  initialDrawdownPct: number;   // 初期停損比例 (尚無獲利時, 10%)
+  baseDrawdownPct: number;      // 基礎回撤停損比例 (有獲利後, 30%)
   contractDrawdownPenalty: number; // 每口額外回撤扣減 (5%)
   reentryRecoveryPct: number;   // 重新入場所需回漲比例 (20%)
   startDate: string;
@@ -78,7 +79,8 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   contractMultiplier: 200,       // 大台每點200元
   contractType: 'TX',
   profitPerContract: 500_000,    // 每獲利50萬加碼一口
-  baseDrawdownPct: 0.30,         // 30%
+  initialDrawdownPct: 0.10,      // 初期10%停損
+  baseDrawdownPct: 0.30,         // 有獲利後30%
   contractDrawdownPenalty: 0.05, // 5%
   reentryRecoveryPct: 0.20,     // 20%
   startDate: '2024-07-01',
