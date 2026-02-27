@@ -1,6 +1,7 @@
 import { NextResponse } from 'next/server';
 import { runBacktest } from '@/lib/backtest/engine';
 import { DailyPrice, BacktestConfig, DEFAULT_CONFIG } from '@/lib/backtest/types';
+import { getFallbackData } from '@/lib/backtest/fallback-data';
 
 /**
  * 從 Yahoo Finance 取得台指加權指數歷史資料
@@ -59,6 +60,15 @@ async function fetchTAIEXData(startDate: string, endDate: string): Promise<Daily
   return prices;
 }
 
+/**
+ * 使用內建歷史資料（當 Yahoo Finance 無法連線時）
+ * 資料基於 TWSE 官方數據、Taipei Times、Focus Taiwan 等來源
+ */
+function getLocalData(startDate: string, endDate: string): DailyPrice[] {
+  const allData = getFallbackData();
+  return allData.filter(d => d.date >= startDate && d.date <= endDate);
+}
+
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
@@ -72,8 +82,17 @@ export async function GET(request: Request) {
       initialCapital: Number(searchParams.get('initialCapital')) || DEFAULT_CONFIG.initialCapital,
     };
 
-    // 取得價格資料
-    const priceData = await fetchTAIEXData(config.startDate, config.endDate);
+    // 嘗試從 Yahoo Finance 取得資料，失敗時使用內建歷史資料
+    let priceData: DailyPrice[];
+    let dataSource: string;
+    try {
+      priceData = await fetchTAIEXData(config.startDate, config.endDate);
+      dataSource = 'Yahoo Finance (^TWII)';
+    } catch {
+      console.log('Yahoo Finance unavailable, using built-in historical data');
+      priceData = getLocalData(config.startDate, config.endDate);
+      dataSource = '內建歷史資料 (基於 TWSE/Taipei Times/Focus Taiwan)';
+    }
 
     if (priceData.length === 0) {
       return NextResponse.json({ error: '無法取得價格資料' }, { status: 400 });
@@ -82,7 +101,7 @@ export async function GET(request: Request) {
     // 執行回測
     const result = runBacktest(priceData, config);
 
-    return NextResponse.json(result);
+    return NextResponse.json({ ...result, dataSource });
   } catch (error) {
     console.error('Backtest API error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';

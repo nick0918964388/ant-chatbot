@@ -112,7 +112,7 @@ function TradeTable({ trades }: { trades: Trade[] }) {
 // 主頁面
 // ============================================================
 export default function BacktestPage() {
-  const [result, setResult] = useState<BacktestResult | null>(null);
+  const [result, setResult] = useState<(BacktestResult & { dataSource?: string }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -307,7 +307,7 @@ export default function BacktestPage() {
 
       {/* 底部資訊 */}
       <div style={{ textAlign: 'center', color: '#475569', fontSize: 12, padding: '32px 0 16px', borderTop: '1px solid rgba(148,163,184,0.1)' }}>
-        資料來源: Yahoo Finance (^TWII 台灣加權指數) | 回測結果僅供參考，不構成投資建議
+        資料來源: {result.dataSource || 'Yahoo Finance (^TWII 台灣加權指數)'} | 回測結果僅供參考，不構成投資建議
       </div>
     </div>
   );
