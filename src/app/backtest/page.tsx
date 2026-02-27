@@ -65,10 +65,10 @@ function MetricCard({ label, value, sub, color }: { label: string; value: string
 // ============================================================
 function TradeTable({ trades }: { trades: Trade[] }) {
   const typeColor: Record<string, string> = {
-    ENTRY: '#3b82f6', ADD: '#22c55e', STOP_LOSS: '#ef4444', REENTRY: '#a855f7',
+    ENTRY: '#3b82f6', ADD: '#22c55e', STOP_LOSS: '#ef4444', MARGIN_CALL: '#f59e0b', REENTRY: '#a855f7',
   };
   const typeLabel: Record<string, string> = {
-    ENTRY: '初始入場', ADD: '獲利加碼', STOP_LOSS: '停損出場', REENTRY: '重新入場',
+    ENTRY: '初始入場', ADD: '獲利加碼', STOP_LOSS: '停損出場', MARGIN_CALL: '追繳斷頭', REENTRY: '重新入場',
   };
 
   return (
@@ -115,12 +115,13 @@ export default function BacktestPage() {
   const [result, setResult] = useState<(BacktestResult & { dataSource?: string }) | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
+  const [contractType, setContractType] = useState<'TX' | 'MTX'>('TX');
 
-  const fetchBacktest = useCallback(async () => {
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX') => {
     setLoading(true);
     setError(null);
     try {
-      const res = await fetch('/api/backtest');
+      const res = await fetch(`/api/backtest?contractType=${ct}`);
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'API error');
@@ -134,7 +135,7 @@ export default function BacktestPage() {
     }
   }, []);
 
-  useEffect(() => { fetchBacktest(); }, [fetchBacktest]);
+  useEffect(() => { fetchBacktest(contractType); }, [fetchBacktest, contractType]);
 
   if (loading) {
     return (
@@ -153,7 +154,7 @@ export default function BacktestPage() {
         <div style={{ textAlign: 'center', padding: '120px 0' }}>
           <div style={{ fontSize: 24, color: '#ef4444', marginBottom: 16 }}>回測失敗</div>
           <div style={{ color: '#94a3b8', marginBottom: 24 }}>{error}</div>
-          <button onClick={fetchBacktest} style={btnStyle}>重新執行</button>
+          <button onClick={() => fetchBacktest(contractType)} style={btnStyle}>重新執行</button>
         </div>
       </div>
     );
@@ -186,14 +187,32 @@ export default function BacktestPage() {
 
   return (
     <div style={containerStyle}>
-      {/* 標題 */}
+      {/* 標題 + 合約切換 */}
       <div style={{ marginBottom: 32 }}>
-        <h1 style={{ fontSize: 28, fontWeight: 800, color: '#f1f5f9', margin: 0 }}>
-          台指期回測策略
-        </h1>
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
+          <h1 style={{ fontSize: 28, fontWeight: 800, color: '#f1f5f9', margin: 0 }}>
+            台指期回測策略
+          </h1>
+          <div style={{ display: 'flex', gap: 4, background: 'rgba(30,41,59,0.8)', borderRadius: 8, padding: 3 }}>
+            {([['TX', '大台 TX', '200元/點 | 保證金37.4萬'], ['MTX', '小台 MTX', '50元/點 | 保證金9.5萬']] as const).map(([key, label, desc]) => (
+              <button
+                key={key}
+                onClick={() => setContractType(key)}
+                title={desc}
+                style={{
+                  padding: '6px 16px', borderRadius: 6, border: 'none', cursor: 'pointer',
+                  fontSize: 13, fontWeight: 600, transition: 'all 0.2s',
+                  background: contractType === key ? '#3b82f6' : 'transparent',
+                  color: contractType === key ? '#fff' : '#94a3b8',
+                }}
+              >{label}</button>
+            ))}
+          </div>
+        </div>
         <p style={{ color: '#94a3b8', marginTop: 8, fontSize: 14 }}>
-          {config.contractType === 'TX' ? '大台' : '小台'} | 起始資金 {fmt.money(config.initialCapital)} |
+          {config.contractType === 'TX' ? '大台' : '小台'} ({config.contractMultiplier}元/點) | 起始資金 {fmt.money(config.initialCapital)} |
           每獲利 {fmt.money(config.profitPerContract)} 加碼一口 |
+          維持保證金 {fmt.money(config.marginPerContract)}/口 |
           初期停損 {(config.initialDrawdownPct * 100).toFixed(0)}% → 獲利後 {(config.baseDrawdownPct * 100).toFixed(0)}%-(口數×{(config.contractDrawdownPenalty * 100).toFixed(0)}%) |
           回漲 {(config.reentryRecoveryPct * 100).toFixed(0)}% 重新入場 |
           {fmt.fullDate(m.startDate)} ~ {fmt.fullDate(m.endDate)}
@@ -206,8 +225,8 @@ export default function BacktestPage() {
         <MetricCard label="最終權益" value={fmt.money(m.finalEquity)} sub={`最高 ${fmt.money(m.maxEquity)}`} />
         <MetricCard label="最大回撤" value={fmt.pct(m.maxDrawdownPct)} color="#ef4444" sub={`金額 ${fmt.money(m.maxDrawdown)}`} />
         <MetricCard label="交易天數" value={`${m.tradingDays}`} sub={`${m.totalTrades} 筆交易`} />
-        <MetricCard label="停損次數" value={`${m.stopLossCount}`} color="#f59e0b" sub={`重入場 ${m.reentryCount} 次`} />
-        <MetricCard label="最大持倉" value={`${m.maxContracts} 口`} sub={`合約: ${config.contractType}`} />
+        <MetricCard label="停損/追繳" value={`${m.stopLossCount}/${m.marginCallCount}`} color="#f59e0b" sub={`重入場 ${m.reentryCount} 次`} />
+        <MetricCard label="最大持倉" value={`${m.maxContracts} 口`} sub={`保證金 ${fmt.money(m.maxContracts * config.marginPerContract)}`} />
       </div>
 
       {/* 台指加權指數走勢 + 交易信號 */}

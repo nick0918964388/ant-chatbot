@@ -12,7 +12,7 @@ export interface DailyPrice {
 export type StrategyState = 'HOLDING' | 'STOPPED_OUT' | 'WAITING_REENTRY';
 
 export interface Trade {
-  type: 'ENTRY' | 'ADD' | 'STOP_LOSS' | 'REENTRY';
+  type: 'ENTRY' | 'ADD' | 'STOP_LOSS' | 'MARGIN_CALL' | 'REENTRY';
   date: string;
   price: number;
   contracts: number;       // 此次交易口數 (正=買進, 負=賣出)
@@ -53,6 +53,7 @@ export interface BacktestMetrics {
   maxDrawdownPct: number;     // 最大權益回撤比例
   totalTrades: number;        // 總交易次數
   stopLossCount: number;      // 停損次數
+  marginCallCount: number;    // 追繳斷頭次數
   reentryCount: number;       // 重新入場次數
   maxContracts: number;       // 最大持倉口數
   winRate: number;            // 勝率 (以停損-重入場為一輪計算)
@@ -70,6 +71,7 @@ export interface BacktestConfig {
   baseDrawdownPct: number;      // 基礎回撤停損比例 (有獲利後, 30%)
   contractDrawdownPenalty: number; // 每口額外回撤扣減 (5%)
   reentryRecoveryPct: number;   // 重新入場所需回漲比例 (20%)
+  marginPerContract: number;    // 每口維持保證金
   startDate: string;
   endDate: string;
 }
@@ -83,6 +85,7 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   baseDrawdownPct: 0.30,         // 有獲利後30%
   contractDrawdownPenalty: 0.05, // 5%
   reentryRecoveryPct: 0.20,     // 20%
+  marginPerContract: 374_000,   // 每口維持保證金 374,000
   startDate: '2024-07-01',
   endDate: new Date().toISOString().split('T')[0],
 };

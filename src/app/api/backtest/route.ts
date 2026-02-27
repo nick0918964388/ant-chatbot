@@ -73,12 +73,14 @@ export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
 
+    const isMTX = searchParams.get('contractType') === 'MTX';
     const config: BacktestConfig = {
       ...DEFAULT_CONFIG,
       startDate: searchParams.get('startDate') || DEFAULT_CONFIG.startDate,
       endDate: searchParams.get('endDate') || DEFAULT_CONFIG.endDate,
-      contractType: (searchParams.get('contractType') as 'TX' | 'MTX') || DEFAULT_CONFIG.contractType,
-      contractMultiplier: searchParams.get('contractType') === 'MTX' ? 50 : 200,
+      contractType: isMTX ? 'MTX' : 'TX',
+      contractMultiplier: isMTX ? 50 : 200,
+      marginPerContract: isMTX ? 95_000 : 374_000,
       initialCapital: Number(searchParams.get('initialCapital')) || DEFAULT_CONFIG.initialCapital,
     };
 

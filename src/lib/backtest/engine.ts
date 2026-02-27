@@ -19,6 +19,14 @@ function calcTargetContracts(realizedPnl: number, config: BacktestConfig): numbe
 }
 
 /**
+ * 計算保證金允許的最大口數
+ */
+function calcMaxContractsByMargin(equity: number, config: BacktestConfig): number {
+  if (equity <= 0) return 0;
+  return Math.floor(equity / config.marginPerContract);
+}
+
+/**
  * 計算停損門檻（兩階段）
  * - 尚無獲利時：初期停損 10%
  * - 有獲利後：30% - (口數 * 5%)，最低不小於 5%
@@ -56,6 +64,7 @@ export function runBacktest(
 
   // 統計
   let stopLossCount = 0;
+  let marginCallCount = 0;
   let reentryCount = 0;
   let maxContracts = 0;
   const roundPnls: number[] = []; // 每輪(入場到停損)的損益
@@ -63,7 +72,13 @@ export function runBacktest(
 
   // === 第一天：初始入場 ===
   const firstDay = priceData[0];
-  const initialContracts = 1;
+  const maxByMargin = calcMaxContractsByMargin(config.initialCapital, config);
+  const initialContracts = Math.min(1, maxByMargin);
+
+  if (initialContracts <= 0) {
+    throw new Error(`初始資金 ${config.initialCapital} 不足以支付一口保證金 ${config.marginPerContract}`);
+  }
+
   contracts = initialContracts;
   avgEntryPrice = firstDay.close;
   pricePeak = firstDay.close;
@@ -75,7 +90,7 @@ export function runBacktest(
     price: firstDay.close,
     contracts: initialContracts,
     totalContracts: initialContracts,
-    reason: `初始入場，買進${initialContracts}口 @ ${firstDay.close}`,
+    reason: `初始入場，買進${initialContracts}口 @ ${firstDay.close} (保證金: ${(initialContracts * config.marginPerContract).toLocaleString()}/${config.initialCapital.toLocaleString()})`,
   });
 
   // === 逐日模擬 ===
@@ -96,6 +111,40 @@ export function runBacktest(
       // 追蹤最高權益
       if (equity > maxEquity) {
         maxEquity = equity;
+      }
+
+      // === 檢查保證金：權益 < 維持保證金 → 追繳斷頭 ===
+      const requiredMargin = contracts * config.marginPerContract;
+      if (equity < requiredMargin && contracts > 0 && i > 0) {
+        const closePnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
+        realizedPnl += closePnl;
+
+        roundPnls.push(realizedPnl - (roundEntryEquity - config.initialCapital));
+
+        trades.push({
+          type: 'MARGIN_CALL',
+          date: day.date,
+          price: close,
+          contracts: -contracts,
+          totalContracts: 0,
+          reason: `追繳斷頭！權益 ${equity.toLocaleString()} < 維持保證金 ${requiredMargin.toLocaleString()} (${contracts}口×${config.marginPerContract.toLocaleString()})`,
+          pnl: closePnl,
+        });
+
+        marginCallCount++;
+        contracts = 0;
+        avgEntryPrice = 0;
+        priceLow = close;
+        state = 'STOPPED_OUT';
+
+        // 記錄快照後繼續
+        snapshots.push({
+          date: day.date, close, state, contracts: 0, avgEntryPrice: 0,
+          unrealizedPnl: 0, realizedPnl,
+          equity: config.initialCapital + realizedPnl,
+          priceFromPeak: 0, drawdownThreshold: 0, pricePeak, priceLow,
+        });
+        continue;
       }
 
       // 判斷是否已有獲利（權益 > 初始資金）
@@ -131,12 +180,14 @@ export function runBacktest(
         priceLow = close;
         state = 'STOPPED_OUT';
       } else {
-        // 檢查是否需要加碼
-        const targetContracts = calcTargetContracts(realizedPnl + unrealizedPnl, config);
+        // 檢查是否需要加碼（同時受獲利規則與保證金限制）
+        const targetByProfit = calcTargetContracts(realizedPnl + unrealizedPnl, config);
+        const targetByMargin = calcMaxContractsByMargin(equity, config);
+        const targetContracts = Math.min(targetByProfit, targetByMargin);
+
         if (targetContracts > contracts) {
           const addContracts = targetContracts - contracts;
-          // 加碼：以當日收盤價買進
-          // 更新平均成本
+          // 加碼：以當日收盤價買進，更新平均成本
           const totalCost = avgEntryPrice * contracts + close * addContracts;
           const newTotal = contracts + addContracts;
           avgEntryPrice = totalCost / newTotal;
@@ -146,13 +197,14 @@ export function runBacktest(
             maxContracts = contracts;
           }
 
+          const newMargin = contracts * config.marginPerContract;
           trades.push({
             type: 'ADD',
             date: day.date,
             price: close,
             contracts: addContracts,
             totalContracts: contracts,
-            reason: `獲利加碼！累計獲利 ${((realizedPnl + unrealizedPnl) / 10000).toFixed(1)}萬，加碼${addContracts}口 @ ${close}，共${contracts}口`,
+            reason: `獲利加碼！累計獲利 ${((realizedPnl + unrealizedPnl) / 10000).toFixed(1)}萬，加碼${addContracts}口 @ ${close}，共${contracts}口 (保證金: ${newMargin.toLocaleString()}/${Math.round(equity).toLocaleString()})`,
           });
         }
       }
@@ -187,26 +239,29 @@ export function runBacktest(
 
       // 檢查是否從低點回漲20%
       const recoveryPct = priceLow > 0 ? (close - priceLow) / priceLow : 0;
+      const currentEquity = config.initialCapital + realizedPnl;
 
-      if (recoveryPct >= config.reentryRecoveryPct) {
-        // 重新入場
-        const targetContracts = calcTargetContracts(realizedPnl, config);
-        contracts = targetContracts;
+      if (recoveryPct >= config.reentryRecoveryPct && currentEquity >= config.marginPerContract) {
+        // 重新入場：受保證金限制
+        const targetByProfit = calcTargetContracts(realizedPnl, config);
+        const targetByMargin = calcMaxContractsByMargin(currentEquity, config);
+        contracts = Math.min(targetByProfit, targetByMargin);
         avgEntryPrice = close;
         pricePeak = close;
-        roundEntryEquity = config.initialCapital + realizedPnl;
+        roundEntryEquity = currentEquity;
 
         if (contracts > maxContracts) {
           maxContracts = contracts;
         }
 
+        const usedMargin = contracts * config.marginPerContract;
         trades.push({
           type: 'REENTRY',
           date: day.date,
           price: close,
           contracts: contracts,
           totalContracts: contracts,
-          reason: `重新入場！價格從低點 ${priceLow.toFixed(0)} 回漲 ${(recoveryPct * 100).toFixed(1)}% >= 20%，買進${contracts}口 @ ${close}`,
+          reason: `重新入場！價格從低點 ${priceLow.toFixed(0)} 回漲 ${(recoveryPct * 100).toFixed(1)}% >= 20%，買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()})`,
         });
 
         reentryCount++;
@@ -264,6 +319,7 @@ export function runBacktest(
     maxDrawdownPct,
     totalTrades: trades.length,
     stopLossCount,
+    marginCallCount,
     reentryCount,
     maxContracts,
     winRate,
