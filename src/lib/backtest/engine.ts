@@ -40,7 +40,21 @@ function calcDrawdownThreshold(contracts: number, hasProfit: boolean, config: Ba
 }
 
 /**
- * 執行回測
+ * 待執行動作（當日信號 → 隔日執行）
+ */
+type PendingAction =
+  | { type: 'STOP_LOSS'; signalDate: string; signalPrice: number; pricePeak: number; drawdownPct: number; threshold: number; hasProfit: boolean }
+  | { type: 'ADD'; targetContracts: number; signalDate: string }
+  | { type: 'REENTRY'; targetContracts: number; signalDate: string; priceLow: number; recoveryPct: number }
+  | null;
+
+/**
+ * 執行回測（隔日進場版）
+ *
+ * 邏輯：
+ * - 當日收盤判斷信號（停損/加碼/重入場）
+ * - 隔日收盤價執行進出場
+ * - 追繳斷頭（MARGIN_CALL）為強制即時執行
  */
 export function runBacktest(
   priceData: DailyPrice[],
@@ -61,13 +75,14 @@ export function runBacktest(
   let pricePeak = 0;    // 持倉期間追蹤的價格峰值
   let priceLow = Infinity; // 停損後追蹤的價格低點
   let maxEquity = config.initialCapital;
+  let pendingAction: PendingAction = null;
 
   // 統計
   let stopLossCount = 0;
   let marginCallCount = 0;
   let reentryCount = 0;
   let maxContracts = 0;
-  const roundPnls: number[] = []; // 每輪(入場到停損)的損益
+  const roundPnls: number[] = [];
   let roundEntryEquity = 0;
 
   // === 第一天：初始入場 ===
@@ -98,27 +113,126 @@ export function runBacktest(
     const day = priceData[i];
     const close = day.close;
 
+    // ─── 步驟1：執行昨日產生的待執行動作 ───
+    if (pendingAction !== null) {
+      if (pendingAction.type === 'STOP_LOSS') {
+        // 隔日收盤價停損
+        const closePnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
+        realizedPnl += closePnl;
+        roundPnls.push(realizedPnl - (roundEntryEquity - config.initialCapital));
+
+        const pa = pendingAction;
+        const phaseLabel = pa.hasProfit
+          ? `獲利階段 ${(pa.threshold * 100).toFixed(1)}%`
+          : `初期 ${(config.initialDrawdownPct * 100).toFixed(0)}%`;
+        trades.push({
+          type: 'STOP_LOSS',
+          date: day.date,
+          price: close,
+          contracts: -contracts,
+          totalContracts: 0,
+          reason: `停損出場！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，隔日 ${day.date} 以 ${close} 執行 (${contracts}口)`,
+          pnl: closePnl,
+        });
+
+        stopLossCount++;
+        contracts = 0;
+        avgEntryPrice = 0;
+        priceLow = close;
+        state = 'STOPPED_OUT';
+        pendingAction = null;
+
+        // 記錄快照後 continue，今日不再產生新信號
+        snapshots.push({
+          date: day.date, close, state, contracts: 0, avgEntryPrice: 0,
+          unrealizedPnl: 0, realizedPnl,
+          equity: config.initialCapital + realizedPnl,
+          priceFromPeak: 0, drawdownThreshold: 0, pricePeak, priceLow,
+        });
+        continue;
+
+      } else if (pendingAction.type === 'ADD') {
+        // 隔日收盤價加碼
+        const pa = pendingAction;
+        const unrealizedPnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
+        const equity = config.initialCapital + realizedPnl + unrealizedPnl;
+
+        // 重新計算隔日的合理加碼口數（用今日收盤價和權益）
+        const targetByProfit = calcTargetContracts(realizedPnl + unrealizedPnl, config);
+        const targetByMargin = calcMaxContractsByMargin(equity, config);
+        const targetContracts = Math.min(targetByProfit, targetByMargin);
+
+        if (targetContracts > contracts) {
+          const addContracts = targetContracts - contracts;
+          const totalCost = avgEntryPrice * contracts + close * addContracts;
+          const newTotal = contracts + addContracts;
+          avgEntryPrice = totalCost / newTotal;
+          contracts = newTotal;
+
+          if (contracts > maxContracts) maxContracts = contracts;
+
+          const newMargin = contracts * config.marginPerContract;
+          trades.push({
+            type: 'ADD',
+            date: day.date,
+            price: close,
+            contracts: addContracts,
+            totalContracts: contracts,
+            reason: `獲利加碼！(信號日 ${pa.signalDate}) 累計獲利 ${((realizedPnl + unrealizedPnl) / 10000).toFixed(1)}萬，隔日加碼${addContracts}口 @ ${close}，共${contracts}口 (保證金: ${newMargin.toLocaleString()}/${Math.round(equity).toLocaleString()})`,
+          });
+        }
+        pendingAction = null;
+        // 繼續往下產生今日信號
+
+      } else if (pendingAction.type === 'REENTRY') {
+        // 隔日收盤價重新入場
+        const pa = pendingAction;
+        const currentEquity = config.initialCapital + realizedPnl;
+
+        if (currentEquity >= config.marginPerContract) {
+          const targetByProfit = calcTargetContracts(realizedPnl, config);
+          const targetByMargin = calcMaxContractsByMargin(currentEquity, config);
+          contracts = Math.min(targetByProfit, targetByMargin);
+          avgEntryPrice = close;
+          pricePeak = close;
+          roundEntryEquity = currentEquity;
+
+          if (contracts > maxContracts) maxContracts = contracts;
+
+          const usedMargin = contracts * config.marginPerContract;
+          trades.push({
+            type: 'REENTRY',
+            date: day.date,
+            price: close,
+            contracts,
+            totalContracts: contracts,
+            reason: `重新入場！(信號日 ${pa.signalDate}) 價格從低點 ${pa.priceLow.toFixed(0)} 回漲 ${(pa.recoveryPct * 100).toFixed(1)}% >= 20%，隔日買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()})`,
+          });
+
+          reentryCount++;
+          state = 'HOLDING';
+        }
+        pendingAction = null;
+        // 若入場成功，繼續往下檢查今日持倉狀態
+      }
+    }
+
+    // ─── 步驟2：根據今日收盤價產生信號 ───
     if (state === 'HOLDING') {
       // 更新價格峰值
-      if (close > pricePeak) {
-        pricePeak = close;
-      }
+      if (close > pricePeak) pricePeak = close;
 
       // 計算未實現損益
       const unrealizedPnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
       const equity = config.initialCapital + realizedPnl + unrealizedPnl;
 
-      // 追蹤最高權益
-      if (equity > maxEquity) {
-        maxEquity = equity;
-      }
+      if (equity > maxEquity) maxEquity = equity;
 
-      // === 檢查保證金：權益 < 維持保證金 → 追繳斷頭 ===
+      // === 追繳斷頭：即時強制執行（不等隔日）===
       const requiredMargin = contracts * config.marginPerContract;
       if (equity < requiredMargin && contracts > 0 && i > 0) {
         const closePnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
         realizedPnl += closePnl;
-
         roundPnls.push(realizedPnl - (roundEntryEquity - config.initialCapital));
 
         trades.push({
@@ -127,7 +241,7 @@ export function runBacktest(
           price: close,
           contracts: -contracts,
           totalContracts: 0,
-          reason: `追繳斷頭！權益 ${equity.toLocaleString()} < 維持保證金 ${requiredMargin.toLocaleString()} (${contracts}口×${config.marginPerContract.toLocaleString()})`,
+          reason: `追繳斷頭！權益 ${Math.round(equity).toLocaleString()} < 維持保證金 ${requiredMargin.toLocaleString()} (${contracts}口×${config.marginPerContract.toLocaleString()})，強制平倉`,
           pnl: closePnl,
         });
 
@@ -137,7 +251,6 @@ export function runBacktest(
         priceLow = close;
         state = 'STOPPED_OUT';
 
-        // 記錄快照後繼續
         snapshots.push({
           date: day.date, close, state, contracts: 0, avgEntryPrice: 0,
           unrealizedPnl: 0, realizedPnl,
@@ -147,65 +260,34 @@ export function runBacktest(
         continue;
       }
 
-      // 判斷是否已有獲利（權益 > 初始資金）
       const hasProfit = equity > config.initialCapital;
-
-      // 計算停損門檻：初期10%，有獲利後 30%-(口數×5%)
       const drawdownThreshold = calcDrawdownThreshold(contracts, hasProfit, config);
       const priceDrawdownPct = pricePeak > 0 ? (pricePeak - close) / pricePeak : 0;
 
-      // 檢查是否觸發停損（價格從峰值回撤超過門檻）
-      if (priceDrawdownPct >= drawdownThreshold && i > 0) {
-        // 停損：平倉所有部位
-        const closePnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
-        realizedPnl += closePnl;
-
-        // 記錄本輪損益
-        roundPnls.push(realizedPnl - (roundEntryEquity - config.initialCapital));
-
-        const phaseLabel = hasProfit ? `獲利階段 ${(drawdownThreshold * 100).toFixed(1)}%` : `初期 ${(config.initialDrawdownPct * 100).toFixed(0)}%`;
-        trades.push({
+      // 檢查停損信號（產生信號，隔日執行）
+      if (priceDrawdownPct >= drawdownThreshold && i > 0 && pendingAction === null) {
+        pendingAction = {
           type: 'STOP_LOSS',
-          date: day.date,
-          price: close,
-          contracts: -contracts,
-          totalContracts: 0,
-          reason: `停損出場！價格從峰值 ${pricePeak.toFixed(0)} 回撤 ${(priceDrawdownPct * 100).toFixed(1)}% >= 門檻 ${(drawdownThreshold * 100).toFixed(1)}% [${phaseLabel}] (${contracts}口)`,
-          pnl: closePnl,
-        });
-
-        stopLossCount++;
-        contracts = 0;
-        avgEntryPrice = 0;
-        priceLow = close;
-        state = 'STOPPED_OUT';
-      } else {
-        // 檢查是否需要加碼（同時受獲利規則與保證金限制）
+          signalDate: day.date,
+          signalPrice: close,
+          pricePeak,
+          drawdownPct: priceDrawdownPct,
+          threshold: drawdownThreshold,
+          hasProfit,
+        };
+      }
+      // 檢查加碼信號（沒有停損信號時才檢查）
+      else if (pendingAction === null) {
         const targetByProfit = calcTargetContracts(realizedPnl + unrealizedPnl, config);
         const targetByMargin = calcMaxContractsByMargin(equity, config);
         const targetContracts = Math.min(targetByProfit, targetByMargin);
 
         if (targetContracts > contracts) {
-          const addContracts = targetContracts - contracts;
-          // 加碼：以當日收盤價買進，更新平均成本
-          const totalCost = avgEntryPrice * contracts + close * addContracts;
-          const newTotal = contracts + addContracts;
-          avgEntryPrice = totalCost / newTotal;
-          contracts = newTotal;
-
-          if (contracts > maxContracts) {
-            maxContracts = contracts;
-          }
-
-          const newMargin = contracts * config.marginPerContract;
-          trades.push({
+          pendingAction = {
             type: 'ADD',
-            date: day.date,
-            price: close,
-            contracts: addContracts,
-            totalContracts: contracts,
-            reason: `獲利加碼！累計獲利 ${((realizedPnl + unrealizedPnl) / 10000).toFixed(1)}萬，加碼${addContracts}口 @ ${close}，共${contracts}口 (保證金: ${newMargin.toLocaleString()}/${Math.round(equity).toLocaleString()})`,
-          });
+            targetContracts,
+            signalDate: day.date,
+          };
         }
       }
 
@@ -231,44 +313,24 @@ export function runBacktest(
 
     } else if (state === 'STOPPED_OUT' || state === 'WAITING_REENTRY') {
       // 追蹤價格低點
-      if (close < priceLow) {
-        priceLow = close;
-      }
+      if (close < priceLow) priceLow = close;
 
       state = 'WAITING_REENTRY';
 
-      // 檢查是否從低點回漲20%
+      // 檢查重入場信號（隔日執行）
       const recoveryPct = priceLow > 0 ? (close - priceLow) / priceLow : 0;
       const currentEquity = config.initialCapital + realizedPnl;
 
-      if (recoveryPct >= config.reentryRecoveryPct && currentEquity >= config.marginPerContract) {
-        // 重新入場：受保證金限制
-        const targetByProfit = calcTargetContracts(realizedPnl, config);
-        const targetByMargin = calcMaxContractsByMargin(currentEquity, config);
-        contracts = Math.min(targetByProfit, targetByMargin);
-        avgEntryPrice = close;
-        pricePeak = close;
-        roundEntryEquity = currentEquity;
-
-        if (contracts > maxContracts) {
-          maxContracts = contracts;
-        }
-
-        const usedMargin = contracts * config.marginPerContract;
-        trades.push({
+      if (recoveryPct >= config.reentryRecoveryPct && currentEquity >= config.marginPerContract && pendingAction === null) {
+        pendingAction = {
           type: 'REENTRY',
-          date: day.date,
-          price: close,
-          contracts: contracts,
-          totalContracts: contracts,
-          reason: `重新入場！價格從低點 ${priceLow.toFixed(0)} 回漲 ${(recoveryPct * 100).toFixed(1)}% >= 20%，買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()})`,
-        });
-
-        reentryCount++;
-        state = 'HOLDING';
+          targetContracts: 0,
+          signalDate: day.date,
+          priceLow,
+          recoveryPct,
+        };
       }
 
-      // 記錄快照
       snapshots.push({
         date: day.date,
         close,
@@ -306,7 +368,7 @@ export function runBacktest(
     }
   }
 
-  // 勝率計算（以每輪入場到停損為基準）
+  // 勝率計算
   const winRounds = roundPnls.filter(p => p > 0).length;
   const winRate = roundPnls.length > 0 ? winRounds / roundPnls.length : (finalEquity > config.initialCapital ? 1 : 0);
 
