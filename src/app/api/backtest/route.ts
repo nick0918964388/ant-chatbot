@@ -74,6 +74,7 @@ export async function GET(request: Request) {
     const { searchParams } = new URL(request.url);
 
     const isMTX = searchParams.get('contractType') === 'MTX';
+    const profitPerContract = Number(searchParams.get('profitPerContract')) || DEFAULT_CONFIG.profitPerContract;
     const config: BacktestConfig = {
       ...DEFAULT_CONFIG,
       startDate: searchParams.get('startDate') || DEFAULT_CONFIG.startDate,
@@ -82,6 +83,7 @@ export async function GET(request: Request) {
       contractMultiplier: isMTX ? 50 : 200,
       marginPerContract: isMTX ? 95_000 : 374_000,
       initialCapital: Number(searchParams.get('initialCapital')) || DEFAULT_CONFIG.initialCapital,
+      profitPerContract,
     };
 
     // 嘗試從 Yahoo Finance 取得資料，失敗時使用內建歷史資料
