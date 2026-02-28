@@ -65,10 +65,10 @@ function MetricCard({ label, value, sub, color }: { label: string; value: string
 // ============================================================
 function TradeTable({ trades }: { trades: Trade[] }) {
   const typeColor: Record<string, string> = {
-    ENTRY: '#3b82f6', ADD: '#22c55e', STOP_LOSS: '#ef4444', MARGIN_CALL: '#f59e0b', REENTRY: '#a855f7',
+    ENTRY: '#3b82f6', ADD: '#22c55e', STOP_LOSS: '#ef4444', PARTIAL_STOP_LOSS: '#fb923c', SECONDARY_STOP_LOSS: '#dc2626', MARGIN_CALL: '#f59e0b', REENTRY: '#a855f7',
   };
   const typeLabel: Record<string, string> = {
-    ENTRY: '初始入場', ADD: '獲利加碼', STOP_LOSS: '停損出場', MARGIN_CALL: '追繳斷頭', REENTRY: '重新入場',
+    ENTRY: '初始入場', ADD: '獲利加碼', STOP_LOSS: '停損出場', PARTIAL_STOP_LOSS: '分批停損', SECONDARY_STOP_LOSS: '二次停損', MARGIN_CALL: '追繳斷頭', REENTRY: '重新入場',
   };
 
   return (
@@ -118,14 +118,18 @@ export default function BacktestPage() {
   const [contractType, setContractType] = useState<'TX' | 'MTX'>('TX');
   const [profitPerContract, setProfitPerContract] = useState(500_000);
   const [startDate, setStartDate] = useState('2024-07-01');
+  const [partialStopLoss, setPartialStopLoss] = useState(false);
+  const [tieredReentry, setTieredReentry] = useState(false);
 
-  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string) => {
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, psl?: boolean, tr?: boolean) => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({ contractType: ct });
       if (ppc) params.set('profitPerContract', String(ppc));
       if (sd) params.set('startDate', sd);
+      if (psl) params.set('partialStopLoss', 'true');
+      if (tr) params.set('tieredReentry', 'true');
       const res = await fetch(`/api/backtest?${params}`);
       if (!res.ok) {
         const err = await res.json();
@@ -140,7 +144,7 @@ export default function BacktestPage() {
     }
   }, []);
 
-  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate); }, [fetchBacktest, contractType, profitPerContract, startDate]);
+  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, partialStopLoss, tieredReentry); }, [fetchBacktest, contractType, profitPerContract, startDate, partialStopLoss, tieredReentry]);
 
   if (loading) {
     return (
@@ -251,6 +255,28 @@ export default function BacktestPage() {
             </div>
           </div>
         </div>
+        {/* 優化策略開關 */}
+        <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
+          <span style={{ color: '#94a3b8', fontSize: 13 }}>優化策略:</span>
+          {([
+            { key: 'partialStopLoss', label: '分批停損', desc: '停損時保留25%倖存倉', active: partialStopLoss, toggle: () => setPartialStopLoss(v => !v), color: '#ef4444' },
+            { key: 'tieredReentry', label: '分批重入場', desc: '8%/14%/20%分階段買回', active: tieredReentry, toggle: () => setTieredReentry(v => !v), color: '#a855f7' },
+          ] as const).map(opt => (
+            <button
+              key={opt.key}
+              onClick={opt.toggle}
+              title={opt.desc}
+              style={{
+                padding: '4px 14px', borderRadius: 6, border: `1px solid ${opt.active ? opt.color : 'rgba(148,163,184,0.2)'}`,
+                cursor: 'pointer', fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
+                background: opt.active ? `${opt.color}20` : 'transparent',
+                color: opt.active ? opt.color : '#64748b',
+              }}
+            >
+              {opt.active ? '\u2713 ' : ''}{opt.label}
+            </button>
+          ))}
+        </div>
         <p style={{ color: '#94a3b8', marginTop: 8, fontSize: 14 }}>
           {config.contractType === 'TX' ? '大台' : '小台'} ({config.contractMultiplier}元/點) | 起始資金 {fmt.money(config.initialCapital)} |
           每獲利 {fmt.money(config.profitPerContract)} 加碼一口 |
@@ -258,6 +284,8 @@ export default function BacktestPage() {
           初期停損 {(config.initialDrawdownPct * 100).toFixed(0)}% → 獲利後 {(config.baseDrawdownPct * 100).toFixed(0)}%-(口數×{(config.contractDrawdownPenalty * 100).toFixed(0)}%) |
           回漲 {(config.reentryRecoveryPct * 100).toFixed(0)}% 重新入場 |
           {fmt.fullDate(m.startDate)} ~ {fmt.fullDate(m.endDate)}
+          {config.partialStopLossEnabled && ` | 分批停損: 賣${(config.partialStopLossRatio * 100).toFixed(0)}%留${((1 - config.partialStopLossRatio) * 100).toFixed(0)}%, 二次停損${(config.secondaryStopLossPct * 100).toFixed(0)}%`}
+          {config.tieredReentryEnabled && ` | 分批重入場: ${config.reentryTiers.map(t => `${(t.recoveryPct * 100).toFixed(0)}%→${(t.targetPct * 100).toFixed(0)}%`).join('/')}`}
         </p>
       </div>
 
@@ -267,7 +295,8 @@ export default function BacktestPage() {
         <MetricCard label="最終權益" value={fmt.money(m.finalEquity)} sub={`最高 ${fmt.money(m.maxEquity)}`} />
         <MetricCard label="最大回撤" value={fmt.pct(m.maxDrawdownPct)} color="#ef4444" sub={`金額 ${fmt.money(m.maxDrawdown)}`} />
         <MetricCard label="交易天數" value={`${m.tradingDays}`} sub={`${m.totalTrades} 筆交易`} />
-        <MetricCard label="停損/追繳" value={`${m.stopLossCount}/${m.marginCallCount}`} color="#f59e0b" sub={`重入場 ${m.reentryCount} 次`} />
+        <MetricCard label="停損/追繳" value={`${m.stopLossCount + m.partialStopLossCount}/${m.marginCallCount}`} color="#f59e0b"
+          sub={`${m.partialStopLossCount > 0 ? `分批${m.partialStopLossCount} 二次${m.secondaryStopLossCount} | ` : ''}重入場 ${m.reentryCount} 次`} />
         <MetricCard label="最大持倉" value={`${m.maxContracts} 口`} sub={`保證金 ${fmt.money(m.maxContracts * config.marginPerContract)}`} />
       </div>
 
@@ -281,15 +310,22 @@ export default function BacktestPage() {
             <Tooltip content={<ChartTooltip />} />
             <Line type="monotone" dataKey="close" stroke="#3b82f6" strokeWidth={2} dot={false} name="收盤價" />
             {/* 交易標記 */}
-            {trades.map((t, i) => (
-              <ReferenceLine
-                key={i}
-                x={fmt.date(t.date)}
-                stroke={t.type === 'STOP_LOSS' ? '#ef4444' : t.type === 'ADD' ? '#22c55e' : '#a855f7'}
-                strokeDasharray="3 3"
-                strokeWidth={1}
-              />
-            ))}
+            {trades.map((t, i) => {
+              const color = t.type === 'STOP_LOSS' || t.type === 'SECONDARY_STOP_LOSS' ? '#ef4444'
+                : t.type === 'PARTIAL_STOP_LOSS' ? '#fb923c'
+                : t.type === 'ADD' ? '#22c55e'
+                : t.type === 'MARGIN_CALL' ? '#f59e0b'
+                : '#a855f7';
+              return (
+                <ReferenceLine
+                  key={i}
+                  x={fmt.date(t.date)}
+                  stroke={color}
+                  strokeDasharray="3 3"
+                  strokeWidth={1}
+                />
+              );
+            })}
           </ComposedChart>
         </ResponsiveContainer>
       </Section>

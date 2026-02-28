@@ -12,7 +12,7 @@ export interface DailyPrice {
 export type StrategyState = 'HOLDING' | 'STOPPED_OUT' | 'WAITING_REENTRY';
 
 export interface Trade {
-  type: 'ENTRY' | 'ADD' | 'STOP_LOSS' | 'MARGIN_CALL' | 'REENTRY';
+  type: 'ENTRY' | 'ADD' | 'STOP_LOSS' | 'PARTIAL_STOP_LOSS' | 'SECONDARY_STOP_LOSS' | 'MARGIN_CALL' | 'REENTRY';
   date: string;
   price: number;
   contracts: number;       // 此次交易口數 (正=買進, 負=賣出)
@@ -52,7 +52,9 @@ export interface BacktestMetrics {
   maxDrawdown: number;        // 最大權益回撤
   maxDrawdownPct: number;     // 最大權益回撤比例
   totalTrades: number;        // 總交易次數
-  stopLossCount: number;      // 停損次數
+  stopLossCount: number;      // 停損次數 (含分批停損)
+  partialStopLossCount: number; // 分批停損次數 (第一階段)
+  secondaryStopLossCount: number; // 二次停損次數 (倖存倉全清)
   marginCallCount: number;    // 追繳斷頭次數
   reentryCount: number;       // 重新入場次數
   maxContracts: number;       // 最大持倉口數
@@ -60,6 +62,11 @@ export interface BacktestMetrics {
   startDate: string;
   endDate: string;
   tradingDays: number;
+}
+
+export interface ReentryTier {
+  recoveryPct: number;    // 回漲門檻 (e.g. 0.08 = 8%)
+  targetPct: number;      // 目標持倉比例 (e.g. 0.25 = 25% of full target)
 }
 
 export interface BacktestConfig {
@@ -74,7 +81,22 @@ export interface BacktestConfig {
   marginPerContract: number;    // 每口維持保證金
   startDate: string;
   endDate: string;
+
+  // 方案4: 分批停損
+  partialStopLossEnabled: boolean;   // 啟用分批停損 (default: false)
+  partialStopLossRatio: number;      // 第一次停損賣出比例 (default: 0.75 = 賣75%)
+  secondaryStopLossPct: number;      // 倖存倉二次停損門檻 (default: 0.05 = 再跌5%)
+
+  // 方案5: 分批重入場
+  tieredReentryEnabled: boolean;     // 啟用分批重入場 (default: false)
+  reentryTiers: ReentryTier[];       // 重入場階段
 }
+
+export const DEFAULT_REENTRY_TIERS: ReentryTier[] = [
+  { recoveryPct: 0.08, targetPct: 0.25 },  // Tier 1: 回漲8% → 買回25% (至少1口)
+  { recoveryPct: 0.14, targetPct: 0.50 },  // Tier 2: 回漲14% → 買回50%
+  { recoveryPct: 0.20, targetPct: 1.00 },  // Tier 3: 回漲20% → 買回100%
+];
 
 export const DEFAULT_CONFIG: BacktestConfig = {
   initialCapital: 1_000_000,
@@ -88,4 +110,13 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   marginPerContract: 374_000,   // 每口維持保證金 374,000
   startDate: '2024-07-01',
   endDate: new Date().toISOString().split('T')[0],
+
+  // 方案4: 分批停損 (預設關閉，向後相容)
+  partialStopLossEnabled: false,
+  partialStopLossRatio: 0.75,    // 賣出75%
+  secondaryStopLossPct: 0.05,   // 倖存倉再跌5%全部清倉
+
+  // 方案5: 分批重入場 (預設關閉，向後相容)
+  tieredReentryEnabled: false,
+  reentryTiers: DEFAULT_REENTRY_TIERS,
 };

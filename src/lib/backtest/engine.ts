@@ -44,8 +44,9 @@ function calcDrawdownThreshold(contracts: number, hasProfit: boolean, config: Ba
  */
 type PendingAction =
   | { type: 'STOP_LOSS'; signalDate: string; signalPrice: number; pricePeak: number; drawdownPct: number; threshold: number; hasProfit: boolean }
+  | { type: 'PARTIAL_STOP_LOSS'; signalDate: string; signalPrice: number; pricePeak: number; drawdownPct: number; threshold: number; hasProfit: boolean; contractsToSell: number }
   | { type: 'ADD'; targetContracts: number; signalDate: string }
-  | { type: 'REENTRY'; targetContracts: number; signalDate: string; priceLow: number; recoveryPct: number }
+  | { type: 'REENTRY'; targetContracts: number; signalDate: string; priceLow: number; recoveryPct: number; tierIndex?: number }
   | null;
 
 /**
@@ -55,6 +56,9 @@ type PendingAction =
  * - 當日收盤判斷信號（停損/加碼/重入場）
  * - 隔日收盤價執行進出場
  * - 追繳斷頭（MARGIN_CALL）為強制即時執行
+ *
+ * 方案4: 分批停損 — 停損時先賣出 75%，保留倖存倉，若再跌 5% 全部清倉
+ * 方案5: 分批重入場 — 分階段逐步買回 (8%/14%/20% 回漲)
  */
 export function runBacktest(
   priceData: DailyPrice[],
@@ -77,8 +81,20 @@ export function runBacktest(
   let maxEquity = config.initialCapital;
   let pendingAction: PendingAction = null;
 
+  // 方案4: 分批停損狀態
+  let partialStopActive = false;     // 是否在分批停損的倖存倉狀態
+  let partialStopNewPeak = 0;        // 分批停損後的新價格峰值（用於二次停損判斷）
+
+  // 方案5: 分批重入場狀態
+  let tieredReentryActive = false;   // 是否在分批重入場中
+  let tieredReentryLow = 0;          // 分批重入場追蹤的低點
+  let nextTierIndex = 0;             // 下一個要觸發的 tier 索引
+  let fullTargetAtReentry = 0;       // 重入場時的完整目標口數
+
   // 統計
   let stopLossCount = 0;
+  let partialStopLossCount = 0;
+  let secondaryStopLossCount = 0;
   let marginCallCount = 0;
   let reentryCount = 0;
   let maxContracts = 0;
@@ -116,7 +132,7 @@ export function runBacktest(
     // ─── 步驟1：執行昨日產生的待執行動作 ───
     if (pendingAction !== null) {
       if (pendingAction.type === 'STOP_LOSS') {
-        // 隔日收盤價停損
+        // 隔日收盤價全額停損
         const closePnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
         realizedPnl += closePnl;
         roundPnls.push(realizedPnl - (roundEntryEquity - config.initialCapital));
@@ -125,21 +141,31 @@ export function runBacktest(
         const phaseLabel = pa.hasProfit
           ? `獲利階段 ${(pa.threshold * 100).toFixed(1)}%`
           : `初期 ${(config.initialDrawdownPct * 100).toFixed(0)}%`;
+        const isSecondary = partialStopActive;
         trades.push({
-          type: 'STOP_LOSS',
+          type: isSecondary ? 'SECONDARY_STOP_LOSS' : 'STOP_LOSS',
           date: day.date,
           price: close,
           contracts: -contracts,
           totalContracts: 0,
-          reason: `停損出場！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，隔日 ${day.date} 以 ${close} 執行 (${contracts}口)`,
+          reason: isSecondary
+            ? `二次停損！(信號日 ${pa.signalDate}) 倖存倉價格從 ${pa.pricePeak.toFixed(0)} 再跌 ${(pa.drawdownPct * 100).toFixed(1)}% >= ${(pa.threshold * 100).toFixed(1)}%，全部清倉 ${contracts}口 @ ${close}`
+            : `停損出場！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，隔日 ${day.date} 以 ${close} 執行 (${contracts}口)`,
           pnl: closePnl,
         });
 
-        stopLossCount++;
+        if (isSecondary) {
+          secondaryStopLossCount++;
+        } else {
+          stopLossCount++;
+        }
         contracts = 0;
         avgEntryPrice = 0;
         priceLow = close;
         state = 'STOPPED_OUT';
+        partialStopActive = false;
+        partialStopNewPeak = 0;
+        tieredReentryActive = false;
         pendingAction = null;
 
         // 記錄快照後 continue，今日不再產生新信號
@@ -148,6 +174,46 @@ export function runBacktest(
           unrealizedPnl: 0, realizedPnl,
           equity: config.initialCapital + realizedPnl,
           priceFromPeak: 0, drawdownThreshold: 0, pricePeak, priceLow,
+        });
+        continue;
+
+      } else if (pendingAction.type === 'PARTIAL_STOP_LOSS') {
+        // 方案4: 隔日收盤價分批停損（賣出部分，保留倖存倉）
+        const pa = pendingAction;
+        const contractsToSell = pa.contractsToSell;
+        const closePnl = (close - avgEntryPrice) * contractsToSell * config.contractMultiplier;
+        realizedPnl += closePnl;
+
+        const remaining = contracts - contractsToSell;
+        const phaseLabel = pa.hasProfit
+          ? `獲利階段 ${(pa.threshold * 100).toFixed(1)}%`
+          : `初期 ${(config.initialDrawdownPct * 100).toFixed(0)}%`;
+        trades.push({
+          type: 'PARTIAL_STOP_LOSS',
+          date: day.date,
+          price: close,
+          contracts: -contractsToSell,
+          totalContracts: remaining,
+          reason: `分批停損！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，賣出${contractsToSell}口，保留${remaining}口倖存倉 @ ${close}`,
+          pnl: closePnl,
+        });
+
+        partialStopLossCount++;
+        contracts = remaining;
+        // avgEntryPrice 不變（剩餘口數的成本基礎不變）
+        // 重設峰值追蹤：倖存倉從現在開始追蹤新的峰值
+        partialStopActive = true;
+        partialStopNewPeak = close;
+        pricePeak = close;
+        pendingAction = null;
+
+        // 記錄快照後 continue（停損日不再產生其他信號）
+        const unrealized = (close - avgEntryPrice) * contracts * config.contractMultiplier;
+        snapshots.push({
+          date: day.date, close, state: 'HOLDING', contracts, avgEntryPrice,
+          unrealizedPnl: unrealized, realizedPnl,
+          equity: config.initialCapital + realizedPnl + unrealized,
+          priceFromPeak: 0, drawdownThreshold: config.secondaryStopLossPct, pricePeak, priceLow,
         });
         continue;
 
@@ -192,7 +258,25 @@ export function runBacktest(
         if (currentEquity >= config.marginPerContract) {
           const targetByProfit = calcTargetContracts(realizedPnl, config);
           const targetByMargin = calcMaxContractsByMargin(currentEquity, config);
-          contracts = Math.min(targetByProfit, targetByMargin);
+          const fullTarget = Math.min(targetByProfit, targetByMargin);
+
+          // 方案5: 分批重入場 — 第一階段只買部分
+          let buyContracts: number;
+          if (config.tieredReentryEnabled && pa.tierIndex !== undefined) {
+            const tier = config.reentryTiers[pa.tierIndex];
+            buyContracts = Math.max(1, Math.round(fullTarget * tier.targetPct));
+            buyContracts = Math.min(buyContracts, targetByMargin);
+
+            // 設定分批重入場追蹤狀態
+            tieredReentryActive = pa.tierIndex < config.reentryTiers.length - 1;
+            tieredReentryLow = pa.priceLow;
+            nextTierIndex = pa.tierIndex + 1;
+            fullTargetAtReentry = fullTarget;
+          } else {
+            buyContracts = fullTarget;
+          }
+
+          contracts = buyContracts;
           avgEntryPrice = close;
           pricePeak = close;
           roundEntryEquity = currentEquity;
@@ -200,13 +284,16 @@ export function runBacktest(
           if (contracts > maxContracts) maxContracts = contracts;
 
           const usedMargin = contracts * config.marginPerContract;
+          const tierLabel = config.tieredReentryEnabled && pa.tierIndex !== undefined
+            ? `[Tier ${pa.tierIndex + 1}/${config.reentryTiers.length}] `
+            : '';
           trades.push({
             type: 'REENTRY',
             date: day.date,
             price: close,
             contracts,
             totalContracts: contracts,
-            reason: `重新入場！(信號日 ${pa.signalDate}) 價格從低點 ${pa.priceLow.toFixed(0)} 回漲 ${(pa.recoveryPct * 100).toFixed(1)}% >= 20%，隔日買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()})`,
+            reason: `${tierLabel}重新入場！(信號日 ${pa.signalDate}) 價格從低點 ${pa.priceLow.toFixed(0)} 回漲 ${(pa.recoveryPct * 100).toFixed(1)}%，隔日買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()})`,
           });
 
           reentryCount++;
@@ -221,6 +308,7 @@ export function runBacktest(
     if (state === 'HOLDING') {
       // 更新價格峰值
       if (close > pricePeak) pricePeak = close;
+      if (partialStopActive && close > partialStopNewPeak) partialStopNewPeak = close;
 
       // 計算未實現損益
       const unrealizedPnl = (close - avgEntryPrice) * contracts * config.contractMultiplier;
@@ -250,6 +338,9 @@ export function runBacktest(
         avgEntryPrice = 0;
         priceLow = close;
         state = 'STOPPED_OUT';
+        partialStopActive = false;
+        partialStopNewPeak = 0;
+        tieredReentryActive = false;
 
         snapshots.push({
           date: day.date, close, state, contracts: 0, avgEntryPrice: 0,
@@ -260,24 +351,98 @@ export function runBacktest(
         continue;
       }
 
+      // === 方案4: 倖存倉二次停損檢查 ===
+      if (partialStopActive && partialStopNewPeak > 0 && i > 0 && pendingAction === null) {
+        const secondaryDrawdown = (partialStopNewPeak - close) / partialStopNewPeak;
+        if (secondaryDrawdown >= config.secondaryStopLossPct) {
+          // 倖存倉二次停損：全部清倉
+          pendingAction = {
+            type: 'STOP_LOSS',
+            signalDate: day.date,
+            signalPrice: close,
+            pricePeak: partialStopNewPeak,
+            drawdownPct: secondaryDrawdown,
+            threshold: config.secondaryStopLossPct,
+            hasProfit: equity > config.initialCapital,
+          };
+
+          // 記錄快照
+          snapshots.push({
+            date: day.date, close, state, contracts, avgEntryPrice,
+            unrealizedPnl, realizedPnl,
+            equity,
+            priceFromPeak: secondaryDrawdown,
+            drawdownThreshold: config.secondaryStopLossPct,
+            pricePeak: partialStopNewPeak, priceLow,
+          });
+          continue;
+        }
+
+        // 倖存倉恢復檢查：若價格已回到分批停損前的峰值水準，解除倖存倉狀態
+        // （不需要完全回到原峰值，只要新峰值高於停損執行時的價格即可恢復正常追蹤）
+        // partialStopActive 會在不符合二次停損時自然繼續，直到被解除
+      }
+
       const hasProfit = equity > config.initialCapital;
       const drawdownThreshold = calcDrawdownThreshold(contracts, hasProfit, config);
       const priceDrawdownPct = pricePeak > 0 ? (pricePeak - close) / pricePeak : 0;
 
       // 檢查停損信號（產生信號，隔日執行）
-      if (priceDrawdownPct >= drawdownThreshold && i > 0 && pendingAction === null) {
-        pendingAction = {
-          type: 'STOP_LOSS',
-          signalDate: day.date,
-          signalPrice: close,
-          pricePeak,
-          drawdownPct: priceDrawdownPct,
-          threshold: drawdownThreshold,
-          hasProfit,
-        };
+      // 注意：倖存倉模式下用二次停損邏輯（上方），不走這裡的一般停損
+      if (!partialStopActive && priceDrawdownPct >= drawdownThreshold && i > 0 && pendingAction === null) {
+        // 方案4: 決定是分批停損還是全額停損
+        if (config.partialStopLossEnabled && contracts > 1) {
+          const contractsToSell = Math.ceil(contracts * config.partialStopLossRatio);
+          pendingAction = {
+            type: 'PARTIAL_STOP_LOSS',
+            signalDate: day.date,
+            signalPrice: close,
+            pricePeak,
+            drawdownPct: priceDrawdownPct,
+            threshold: drawdownThreshold,
+            hasProfit,
+            contractsToSell,
+          };
+        } else {
+          pendingAction = {
+            type: 'STOP_LOSS',
+            signalDate: day.date,
+            signalPrice: close,
+            pricePeak,
+            drawdownPct: priceDrawdownPct,
+            threshold: drawdownThreshold,
+            hasProfit,
+          };
+        }
       }
-      // 檢查加碼信號（沒有停損信號時才檢查）
-      else if (pendingAction === null) {
+      // 方案5: 分批重入場 — 持倉中檢查是否有更高 tier 的加碼
+      else if (tieredReentryActive && pendingAction === null && !partialStopActive) {
+        if (nextTierIndex < config.reentryTiers.length) {
+          const tier = config.reentryTiers[nextTierIndex];
+          const recoveryFromLow = tieredReentryLow > 0 ? (close - tieredReentryLow) / tieredReentryLow : 0;
+
+          if (recoveryFromLow >= tier.recoveryPct) {
+            // 計算此 tier 的目標口數
+            const tierTargetContracts = Math.max(1, Math.round(fullTargetAtReentry * tier.targetPct));
+            const marginAllowed = calcMaxContractsByMargin(equity, config);
+            const targetContracts = Math.min(tierTargetContracts, marginAllowed);
+
+            if (targetContracts > contracts) {
+              pendingAction = {
+                type: 'ADD',
+                targetContracts,
+                signalDate: day.date,
+              };
+            }
+            nextTierIndex++;
+            if (nextTierIndex >= config.reentryTiers.length) {
+              tieredReentryActive = false;
+            }
+          }
+        }
+      }
+      // 檢查加碼信號（沒有停損信號、不在倖存倉模式時才檢查）
+      else if (pendingAction === null && !partialStopActive) {
         const targetByProfit = calcTargetContracts(realizedPnl + unrealizedPnl, config);
         const targetByMargin = calcMaxContractsByMargin(equity, config);
         const targetContracts = Math.min(targetByProfit, targetByMargin);
@@ -296,6 +461,13 @@ export function runBacktest(
         ? (close - avgEntryPrice) * contracts * config.contractMultiplier
         : 0;
 
+      const currentThreshold = partialStopActive
+        ? config.secondaryStopLossPct
+        : calcDrawdownThreshold(Math.max(contracts, 1), equity > config.initialCapital, config);
+      const currentDrawdown = partialStopActive
+        ? (partialStopNewPeak > 0 ? (partialStopNewPeak - close) / partialStopNewPeak : 0)
+        : (pricePeak > 0 ? (pricePeak - close) / pricePeak : 0);
+
       snapshots.push({
         date: day.date,
         close,
@@ -305,9 +477,9 @@ export function runBacktest(
         unrealizedPnl: snapshotUnrealizedPnl,
         realizedPnl,
         equity: config.initialCapital + realizedPnl + snapshotUnrealizedPnl,
-        priceFromPeak: pricePeak > 0 ? (pricePeak - close) / pricePeak : 0,
-        drawdownThreshold: calcDrawdownThreshold(Math.max(contracts, 1), equity > config.initialCapital, config),
-        pricePeak,
+        priceFromPeak: currentDrawdown,
+        drawdownThreshold: currentThreshold,
+        pricePeak: partialStopActive ? partialStopNewPeak : pricePeak,
         priceLow,
       });
 
@@ -321,14 +493,32 @@ export function runBacktest(
       const recoveryPct = priceLow > 0 ? (close - priceLow) / priceLow : 0;
       const currentEquity = config.initialCapital + realizedPnl;
 
-      if (recoveryPct >= config.reentryRecoveryPct && currentEquity >= config.marginPerContract && pendingAction === null) {
-        pendingAction = {
-          type: 'REENTRY',
-          targetContracts: 0,
-          signalDate: day.date,
-          priceLow,
-          recoveryPct,
-        };
+      if (currentEquity >= config.marginPerContract && pendingAction === null) {
+        // 方案5: 分批重入場
+        if (config.tieredReentryEnabled && config.reentryTiers.length > 0) {
+          const firstTier = config.reentryTiers[0];
+          if (recoveryPct >= firstTier.recoveryPct) {
+            pendingAction = {
+              type: 'REENTRY',
+              targetContracts: 0,
+              signalDate: day.date,
+              priceLow,
+              recoveryPct,
+              tierIndex: 0,
+            };
+          }
+        } else {
+          // 原始邏輯：固定 20% 回漲
+          if (recoveryPct >= config.reentryRecoveryPct) {
+            pendingAction = {
+              type: 'REENTRY',
+              targetContracts: 0,
+              signalDate: day.date,
+              priceLow,
+              recoveryPct,
+            };
+          }
+        }
       }
 
       snapshots.push({
@@ -381,6 +571,8 @@ export function runBacktest(
     maxDrawdownPct,
     totalTrades: trades.length,
     stopLossCount,
+    partialStopLossCount,
+    secondaryStopLossCount,
     marginCallCount,
     reentryCount,
     maxContracts,
