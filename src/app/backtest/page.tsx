@@ -118,17 +118,19 @@ export default function BacktestPage() {
   const [contractType, setContractType] = useState<'TX' | 'MTX'>('TX');
   const [profitPerContract, setProfitPerContract] = useState(500_000);
   const [initialCapital, setInitialCapital] = useState(1_000_000);
-  const [startDate, setStartDate] = useState('2024-07-01');
+  const [startDate, setStartDate] = useState('2015-01-05');
+  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
 
-  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, psl?: boolean, tr?: boolean, ic?: number) => {
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number) => {
     setLoading(true);
     setError(null);
     try {
       const params = new URLSearchParams({ contractType: ct });
       if (ppc) params.set('profitPerContract', String(ppc));
       if (sd) params.set('startDate', sd);
+      if (ed) params.set('endDate', ed);
       if (psl) params.set('partialStopLoss', 'true');
       if (tr) params.set('tieredReentry', 'true');
       if (ic) params.set('initialCapital', String(ic));
@@ -146,7 +148,7 @@ export default function BacktestPage() {
     }
   }, []);
 
-  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, partialStopLoss, tieredReentry, initialCapital); }, [fetchBacktest, contractType, profitPerContract, startDate, partialStopLoss, tieredReentry, initialCapital]);
+  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital); }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital]);
 
   if (loading) {
     return (
@@ -256,15 +258,15 @@ export default function BacktestPage() {
               ))}
             </div>
           </div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-            <span style={{ color: '#94a3b8', fontSize: 13 }}>起始日期:</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>期間:</span>
             <div style={{ display: 'flex', gap: 3, background: 'rgba(30,41,59,0.8)', borderRadius: 6, padding: 2 }}>
-              {([['2020-01-02', '2020'], ['2022-01-03', '2022'], ['2024-07-01', '2024/07']] as const).map(([d, label]) => (
+              {([['2015-01-05', '2015'], ['2018-01-02', '2018'], ['2020-01-02', '2020'], ['2022-01-03', '2022'], ['2024-07-01', '2024/07']] as const).map(([d, label]) => (
                 <button
                   key={d}
                   onClick={() => setStartDate(d)}
                   style={{
-                    padding: '4px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                    padding: '4px 10px', borderRadius: 4, border: 'none', cursor: 'pointer',
                     fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
                     background: startDate === d ? '#a855f7' : 'transparent',
                     color: startDate === d ? '#fff' : '#94a3b8',
@@ -272,6 +274,25 @@ export default function BacktestPage() {
                 >{label}</button>
               ))}
             </div>
+            <input
+              type="date"
+              value={startDate}
+              onChange={e => setStartDate(e.target.value)}
+              style={{
+                background: 'rgba(30,41,59,0.8)', color: '#e2e8f0', border: '1px solid rgba(148,163,184,0.2)',
+                borderRadius: 6, padding: '3px 8px', fontSize: 12, cursor: 'pointer',
+              }}
+            />
+            <span style={{ color: '#64748b', fontSize: 13 }}>～</span>
+            <input
+              type="date"
+              value={endDate}
+              onChange={e => setEndDate(e.target.value)}
+              style={{
+                background: 'rgba(30,41,59,0.8)', color: '#e2e8f0', border: '1px solid rgba(148,163,184,0.2)',
+                borderRadius: 6, padding: '3px 8px', fontSize: 12, cursor: 'pointer',
+              }}
+            />
           </div>
         </div>
         {/* 優化策略開關 */}

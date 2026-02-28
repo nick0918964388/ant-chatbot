@@ -108,7 +108,7 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   contractDrawdownPenalty: 0.05, // 5%
   reentryRecoveryPct: 0.20,     // 20%
   marginPerContract: 374_000,   // 每口維持保證金 374,000
-  startDate: '2024-07-01',
+  startDate: '2015-01-05',
   endDate: new Date().toISOString().split('T')[0],
 
   // 方案4: 分批停損 (預設關閉，向後相容)
