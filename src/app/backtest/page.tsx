@@ -117,11 +117,12 @@ export default function BacktestPage() {
   const [error, setError] = useState<string | null>(null);
   const [contractType, setContractType] = useState<'TX' | 'MTX'>('TX');
   const [profitPerContract, setProfitPerContract] = useState(500_000);
+  const [initialCapital, setInitialCapital] = useState(1_000_000);
   const [startDate, setStartDate] = useState('2024-07-01');
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
 
-  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, psl?: boolean, tr?: boolean) => {
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, psl?: boolean, tr?: boolean, ic?: number) => {
     setLoading(true);
     setError(null);
     try {
@@ -130,6 +131,7 @@ export default function BacktestPage() {
       if (sd) params.set('startDate', sd);
       if (psl) params.set('partialStopLoss', 'true');
       if (tr) params.set('tieredReentry', 'true');
+      if (ic) params.set('initialCapital', String(ic));
       const res = await fetch(`/api/backtest?${params}`);
       if (!res.ok) {
         const err = await res.json();
@@ -144,7 +146,7 @@ export default function BacktestPage() {
     }
   }, []);
 
-  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, partialStopLoss, tieredReentry); }, [fetchBacktest, contractType, profitPerContract, startDate, partialStopLoss, tieredReentry]);
+  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, partialStopLoss, tieredReentry, initialCapital); }, [fetchBacktest, contractType, profitPerContract, startDate, partialStopLoss, tieredReentry, initialCapital]);
 
   if (loading) {
     return (
@@ -220,6 +222,23 @@ export default function BacktestPage() {
         </div>
         {/* 參數設定列 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 12, flexWrap: 'wrap' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>起始資金:</span>
+            <div style={{ display: 'flex', gap: 3, background: 'rgba(30,41,59,0.8)', borderRadius: 6, padding: 2 }}>
+              {([500_000, 1_000_000, 2_000_000, 5_000_000] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setInitialCapital(v)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
+                    background: initialCapital === v ? '#3b82f6' : 'transparent',
+                    color: initialCapital === v ? '#fff' : '#94a3b8',
+                  }}
+                >{fmt.money(v)}</button>
+              ))}
+            </div>
+          </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ color: '#94a3b8', fontSize: 13 }}>加碼門檻:</span>
             <div style={{ display: 'flex', gap: 3, background: 'rgba(30,41,59,0.8)', borderRadius: 6, padding: 2 }}>
