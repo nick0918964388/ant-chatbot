@@ -7,14 +7,14 @@ import { DailyPrice } from './types';
  * 實際 CSV 格式（期交所下載）:
  * 交易日期,契約,到期月份(週別),開盤價,最高價,最低價,收盤價,漲跌價,漲跌%,成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量
  *
- * 合約代碼：TXF=台指期, MXF=小台指
+ * 合約代碼：TX=台指期, MTX=小台指
  * 交易時段：一般 / 盤後（只使用「一般」時段）
  * 價格欄位可能是 "-"（無交易）
  */
 
 interface RawRow {
   date: string;         // YYYY-MM-DD
-  contract: string;     // TXF, MXF, etc.
+  contract: string;     // TX, MTX, etc.
   deliveryMonth: string; // e.g. "202403"
   open: number;
   high: number;
@@ -24,11 +24,6 @@ interface RawRow {
   volume: number;
 }
 
-/** TAIFEX 合約代碼對應 */
-const CONTRACT_MAP: Record<string, string> = {
-  TX: 'TXF',
-  MTX: 'MXF',
-};
 
 /**
  * 計算某月的第三個星期三（台指期結算日）
@@ -98,7 +93,7 @@ function normalizeDeliveryMonth(raw: string): string {
  * 解析 TAIFEX CSV 字串，回傳每日收盤價（使用最近月合約）
  *
  * @param csvText - CSV 原始文字
- * @param contractType - 'TX'（大台）或 'MTX'（小台），自動對應 TXF/MXF
+ * @param contractType - 'TX'（台指期）或 'MTX'（小台指）
  */
 export function parseTAIFEXCsv(csvText: string, contractType: string = 'TX'): DailyPrice[] {
   const text = csvText.replace(/^\uFEFF/, '');
@@ -106,8 +101,8 @@ export function parseTAIFEXCsv(csvText: string, contractType: string = 'TX'): Da
 
   if (lines.length < 2) return [];
 
-  // 對應實際合約代碼
-  const csvContractCode = CONTRACT_MAP[contractType] || contractType;
+  // 直接使用合約代碼（期交所 CSV 中就是 TX / MTX）
+  const csvContractCode = contractType;
 
   // 自動偵測表頭位置
   let headerIdx = 0;
