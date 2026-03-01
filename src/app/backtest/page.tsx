@@ -166,7 +166,7 @@ export default function BacktestPage() {
     }
   }, []);
 
-  // 上傳 CSV → 伺服器端累積
+  // 上傳 CSV → 伺服器端累積（自動偵測 Big5 / UTF-8 編碼）
   const handleCsvUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
@@ -174,7 +174,12 @@ export default function BacktestPage() {
     setUploading(true);
     setUploadMsg(null);
     try {
-      const text = await file.text();
+      const buffer = await file.arrayBuffer();
+      // 先嘗試 UTF-8，若表頭無法辨識則改用 Big5（期交所預設編碼）
+      let text = new TextDecoder('utf-8').decode(buffer);
+      if (!text.includes('交易日期') && !text.includes('契約')) {
+        text = new TextDecoder('big5').decode(buffer);
+      }
       const res = await fetch('/api/backtest/data', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
