@@ -118,7 +118,7 @@ export default function BacktestPage() {
   const [error, setError] = useState<string | null>(null);
   const [contractType, setContractType] = useState<'TX' | 'MTX'>('TX');
   const [profitPerContract, setProfitPerContract] = useState(500_000);
-  const [initialCapital, setInitialCapital] = useState(1_000_000);
+  const [initialCapital, setInitialCapital] = useState(2_000_000);
   const [startDate, setStartDate] = useState('2015-01-05');
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [partialStopLoss, setPartialStopLoss] = useState(false);

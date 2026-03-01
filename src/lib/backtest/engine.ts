@@ -110,7 +110,8 @@ export function runBacktest(
   const initialContracts = Math.min(1, maxByMargin);
 
   if (initialContracts <= 0) {
-    throw new Error(`初始資金 ${config.initialCapital} 不足以支付一口保證金 ${config.marginPerContract}`);
+    const effectiveMargin = config.marginPerContract * config.marginRatio;
+    throw new Error(`初始資金 ${config.initialCapital} 不足以支付一口有效保證金 ${effectiveMargin}（保證金 ${config.marginPerContract} × 比率 ${(config.marginRatio * 100).toFixed(0)}%）`);
   }
 
   contracts = initialContracts;
