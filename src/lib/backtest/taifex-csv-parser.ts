@@ -4,13 +4,17 @@ import { DailyPrice } from './types';
  * 解析 TAIFEX（期交所）每日行情下載 CSV
  * 從多合約中自動選取「最近月」合約收盤價
  *
- * CSV 格式（期交所下載）:
- * 交易日期, 契約, 到期月份(週別), 開盤價, 最高價, 最低價, 收盤價, 結算價, 成交量, ...
+ * 實際 CSV 格式（期交所下載）:
+ * 交易日期,契約,到期月份(週別),開盤價,最高價,最低價,收盤價,漲跌價,漲跌%,成交量,結算價,未沖銷契約數,最後最佳買價,最後最佳賣價,歷史最高價,歷史最低價,是否因訊息面暫停交易,交易時段,價差對單式委託成交量
+ *
+ * 合約代碼：TXF=台指期, MXF=小台指
+ * 交易時段：一般 / 盤後（只使用「一般」時段）
+ * 價格欄位可能是 "-"（無交易）
  */
 
 interface RawRow {
   date: string;         // YYYY-MM-DD
-  contract: string;     // TX, MTX, etc.
+  contract: string;     // TXF, MXF, etc.
   deliveryMonth: string; // e.g. "202403"
   open: number;
   high: number;
@@ -20,15 +24,19 @@ interface RawRow {
   volume: number;
 }
 
+/** TAIFEX 合約代碼對應 */
+const CONTRACT_MAP: Record<string, string> = {
+  TX: 'TXF',
+  MTX: 'MXF',
+};
+
 /**
  * 計算某月的第三個星期三（台指期結算日）
  */
 function getThirdWednesday(year: number, month: number): Date {
   const d = new Date(year, month - 1, 1);
-  // 找到第一個星期三
   const dayOfWeek = d.getDay();
   const firstWed = dayOfWeek <= 3 ? 3 - dayOfWeek + 1 : 10 - dayOfWeek + 1;
-  // 第三個星期三 = 第一個 + 14
   return new Date(year, month - 1, firstWed + 14);
 }
 
@@ -43,10 +51,8 @@ function getNearMonthKey(dateStr: string): string {
   const thirdWed = getThirdWednesday(year, month);
 
   if (d <= thirdWed) {
-    // 結算日當天或之前 → 當月合約
     return `${year}${String(month).padStart(2, '0')}`;
   } else {
-    // 結算日之後 → 次月合約
     const nextMonth = month === 12 ? 1 : month + 1;
     const nextYear = month === 12 ? year + 1 : year;
     return `${nextYear}${String(nextMonth).padStart(2, '0')}`;
@@ -54,16 +60,17 @@ function getNearMonthKey(dateStr: string): string {
 }
 
 /**
- * 清除數值中的逗號（例如 "23,456" → 23456）
+ * 解析價格欄位："-" 代表無交易，回傳 0
  */
-function parseNum(s: string): number {
+function parsePrice(s: string): number {
   const cleaned = s.replace(/,/g, '').trim();
+  if (cleaned === '-' || cleaned === '') return 0;
   const n = Number(cleaned);
   return isNaN(n) ? 0 : n;
 }
 
 /**
- * 標準化日期格式：支援 YYYY/MM/DD 和 YYYYMMDD → YYYY-MM-DD
+ * 標準化日期格式：YYYY/MM/DD → YYYY-MM-DD
  */
 function normalizeDate(raw: string): string {
   const s = raw.trim();
@@ -78,25 +85,29 @@ function normalizeDate(raw: string): string {
 }
 
 /**
- * 標準化到期月份：支援 "202403"、"2024/03"、"202403W1" 等格式
- * 只取前6碼 YYYYMM
+ * 標準化到期月份：去除空白，只取前6碼 YYYYMM
+ * 過濾掉週選（W1, W2 等）
  */
 function normalizeDeliveryMonth(raw: string): string {
   const s = raw.replace(/[/\s]/g, '').trim();
-  // 過濾掉週選（W1, W2 等）— 只要月合約
   if (/W\d/i.test(s)) return '';
   return s.slice(0, 6);
 }
 
 /**
  * 解析 TAIFEX CSV 字串，回傳每日收盤價（使用最近月合約）
+ *
+ * @param csvText - CSV 原始文字
+ * @param contractType - 'TX'（大台）或 'MTX'（小台），自動對應 TXF/MXF
  */
-export function parseTAIFEXCsv(csvText: string, contractFilter: string = 'TX'): DailyPrice[] {
-  // 移除 BOM
+export function parseTAIFEXCsv(csvText: string, contractType: string = 'TX'): DailyPrice[] {
   const text = csvText.replace(/^\uFEFF/, '');
   const lines = text.split(/\r?\n/).filter(l => l.trim());
 
   if (lines.length < 2) return [];
+
+  // 對應實際合約代碼
+  const csvContractCode = CONTRACT_MAP[contractType] || contractType;
 
   // 自動偵測表頭位置
   let headerIdx = 0;
@@ -109,7 +120,7 @@ export function parseTAIFEXCsv(csvText: string, contractFilter: string = 'TX'): 
 
   const headers = lines[headerIdx].split(',').map(h => h.trim().replace(/"/g, ''));
 
-  // 找出各欄位的 index
+  // 找出各欄位 index
   const colMap = {
     date: headers.findIndex(h => h.includes('交易日期') || /Trading.*Date/i.test(h)),
     contract: headers.findIndex(h => h.includes('契約') || /Contract/i.test(h)),
@@ -120,9 +131,9 @@ export function parseTAIFEXCsv(csvText: string, contractFilter: string = 'TX'): 
     close: headers.findIndex(h => h === '收盤價' || /^Close$/i.test(h)),
     settlement: headers.findIndex(h => h.includes('結算價') || /Settlement/i.test(h)),
     volume: headers.findIndex(h => h === '成交量' || /Volume/i.test(h)),
+    session: headers.findIndex(h => h.includes('交易時段') || /Session/i.test(h)),
   };
 
-  // 驗證必要欄位
   if (colMap.date < 0 || colMap.contract < 0 || colMap.close < 0) {
     throw new Error(
       `CSV 格式無法辨識。需要至少包含「交易日期」「契約」「收盤價」欄位。\n` +
@@ -134,33 +145,44 @@ export function parseTAIFEXCsv(csvText: string, contractFilter: string = 'TX'): 
   const rows: RawRow[] = [];
   for (let i = headerIdx + 1; i < lines.length; i++) {
     const cols = lines[i].split(',').map(c => c.trim().replace(/"/g, ''));
-    if (cols.length < headers.length) continue;
+    if (cols.length < 5) continue;
+
+    // 只要「一般」時段（過濾掉「盤後」）
+    if (colMap.session >= 0) {
+      const session = cols[colMap.session]?.trim();
+      if (session && session !== '一般') continue;
+    }
 
     const contract = cols[colMap.contract]?.trim();
-    if (contract !== contractFilter) continue;
+    if (contract !== csvContractCode) continue;
 
     const deliveryRaw = colMap.delivery >= 0 ? cols[colMap.delivery] : '';
     const deliveryMonth = normalizeDeliveryMonth(deliveryRaw);
-    if (!deliveryMonth) continue; // 跳過週選
+    if (!deliveryMonth) continue;
 
-    const close = parseNum(cols[colMap.close]);
-    if (close <= 0) continue; // 跳過無效價格
+    const close = parsePrice(cols[colMap.close]);
+    if (close <= 0) continue; // 跳過 "-" 無交易的列
+
+    const open = colMap.open >= 0 ? parsePrice(cols[colMap.open]) : 0;
+    const high = colMap.high >= 0 ? parsePrice(cols[colMap.high]) : 0;
+    const low = colMap.low >= 0 ? parsePrice(cols[colMap.low]) : 0;
+    const settlement = colMap.settlement >= 0 ? parsePrice(cols[colMap.settlement]) : 0;
 
     rows.push({
       date: normalizeDate(cols[colMap.date]),
       contract,
       deliveryMonth,
-      open: colMap.open >= 0 ? parseNum(cols[colMap.open]) : close,
-      high: colMap.high >= 0 ? parseNum(cols[colMap.high]) : close,
-      low: colMap.low >= 0 ? parseNum(cols[colMap.low]) : close,
+      open: open || close,
+      high: high || close,
+      low: low || close,
       close,
-      settlement: colMap.settlement >= 0 ? parseNum(cols[colMap.settlement]) : close,
-      volume: colMap.volume >= 0 ? parseNum(cols[colMap.volume]) : 0,
+      settlement: settlement || close,
+      volume: colMap.volume >= 0 ? parsePrice(cols[colMap.volume]) : 0,
     });
   }
 
   if (rows.length === 0) {
-    throw new Error(`CSV 中找不到 ${contractFilter} 合約資料`);
+    throw new Error(`CSV 中找不到 ${csvContractCode} 合約資料（一般時段）`);
   }
 
   // 按日期分組，選取最近月合約
@@ -175,9 +197,7 @@ export function parseTAIFEXCsv(csvText: string, contractFilter: string = 'TX'): 
   for (const [date, dayRows] of byDate) {
     const nearMonthKey = getNearMonthKey(date);
 
-    // 優先選最近月份合約
-    // 1. 精確匹配 nearMonthKey
-    // 2. 找最接近且 >= nearMonthKey 的合約
+    // 優先精確匹配近月合約，否則找最接近的
     let selected = dayRows.find(r => r.deliveryMonth === nearMonthKey);
     if (!selected) {
       const sorted = [...dayRows].sort((a, b) => a.deliveryMonth.localeCompare(b.deliveryMonth));
@@ -196,8 +216,6 @@ export function parseTAIFEXCsv(csvText: string, contractFilter: string = 'TX'): 
     }
   }
 
-  // 按日期排序
   result.sort((a, b) => a.date.localeCompare(b.date));
-
   return result;
 }
