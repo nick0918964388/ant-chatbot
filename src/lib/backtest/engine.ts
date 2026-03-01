@@ -15,7 +15,9 @@ import {
  * 初始1口，每獲利 profitPerContract 加碼1口
  */
 function calcTargetContracts(realizedPnl: number, config: BacktestConfig): number {
-  return 1 + Math.floor(Math.max(0, realizedPnl) / config.profitPerContract);
+  const target = 1 + Math.floor(Math.max(0, realizedPnl) / config.profitPerContract);
+  if (config.maxContractsLimit > 0) return Math.min(target, config.maxContractsLimit);
+  return target;
 }
 
 /**

@@ -82,6 +82,7 @@ function buildConfig(params: {
   partialStopLoss?: string | null;
   tieredReentry?: string | null;
   initialCapital?: string | null;
+  maxContractsLimit?: string | null;
 }): BacktestConfig {
   const isMTX = params.contractType === 'MTX';
   return {
@@ -95,6 +96,7 @@ function buildConfig(params: {
     profitPerContract: Number(params.profitPerContract) || DEFAULT_CONFIG.profitPerContract,
     partialStopLossEnabled: params.partialStopLoss === 'true',
     tieredReentryEnabled: params.tieredReentry === 'true',
+    maxContractsLimit: Number(params.maxContractsLimit) || 0,
   };
 }
 
@@ -113,6 +115,7 @@ export async function GET(request: Request) {
       partialStopLoss: searchParams.get('partialStopLoss'),
       tieredReentry: searchParams.get('tieredReentry'),
       initialCapital: searchParams.get('initialCapital'),
+      maxContractsLimit: searchParams.get('maxContractsLimit'),
     });
 
     // 優先使用累積的 TAIFEX 期貨數據，否則 Yahoo Finance，最後內建資料

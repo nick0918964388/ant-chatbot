@@ -90,6 +90,9 @@ export interface BacktestConfig {
   // 方案5: 分批重入場
   tieredReentryEnabled: boolean;     // 啟用分批重入場 (default: false)
   reentryTiers: ReentryTier[];       // 重入場階段
+
+  // 口數上限
+  maxContractsLimit: number;         // 最大持倉口數上限 (0=不限)
 }
 
 export const DEFAULT_REENTRY_TIERS: ReentryTier[] = [
@@ -119,4 +122,7 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   // 方案5: 分批重入場 (預設關閉，向後相容)
   tieredReentryEnabled: false,
   reentryTiers: DEFAULT_REENTRY_TIERS,
+
+  // 口數上限 (0=不限)
+  maxContractsLimit: 0,
 };

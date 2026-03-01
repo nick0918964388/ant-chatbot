@@ -123,6 +123,7 @@ export default function BacktestPage() {
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
+  const [maxContractsLimit, setMaxContractsLimit] = useState(0);
   const [dataInfo, setDataInfo] = useState<{ totalDays: number; dateRange: { from: string; to: string } | null } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
@@ -141,7 +142,7 @@ export default function BacktestPage() {
 
   useEffect(() => { fetchDataInfo(); }, [fetchDataInfo]);
 
-  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number) => {
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number, mcl?: number) => {
     setLoading(true);
     setError(null);
     try {
@@ -152,6 +153,7 @@ export default function BacktestPage() {
       if (psl) params.set('partialStopLoss', 'true');
       if (tr) params.set('tieredReentry', 'true');
       if (ic) params.set('initialCapital', String(ic));
+      if (mcl && mcl > 0) params.set('maxContractsLimit', String(mcl));
       const res = await fetch(`/api/backtest?${params}`);
       if (!res.ok) {
         const err = await res.json();
@@ -206,8 +208,8 @@ export default function BacktestPage() {
   }, []);
 
   const runBacktestNow = useCallback(() => {
-    fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital);
-  }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital]);
+    fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, maxContractsLimit);
+  }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, maxContractsLimit]);
 
   // 首次載入 + 上傳資料後自動跑一次
   useEffect(() => { runBacktestNow(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -317,6 +319,23 @@ export default function BacktestPage() {
                     color: profitPerContract === v ? '#fff' : '#94a3b8',
                   }}
                 >{fmt.money(v)}</button>
+              ))}
+            </div>
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>口數上限:</span>
+            <div style={{ display: 'flex', gap: 3, background: 'rgba(30,41,59,0.8)', borderRadius: 6, padding: 2 }}>
+              {([0, 2, 3, 5, 10] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setMaxContractsLimit(v)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
+                    background: maxContractsLimit === v ? '#f59e0b' : 'transparent',
+                    color: maxContractsLimit === v ? '#fff' : '#94a3b8',
+                  }}
+                >{v === 0 ? '不限' : `${v}口`}</button>
               ))}
             </div>
           </div>
