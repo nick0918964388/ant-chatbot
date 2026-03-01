@@ -148,6 +148,7 @@ export function runBacktest(
           ? `獲利階段 ${(pa.threshold * 100).toFixed(1)}%`
           : `初期 ${(config.initialDrawdownPct * 100).toFixed(0)}%`;
         const isSecondary = partialStopActive;
+        const stopTriggerPrice = Math.round(pa.pricePeak * (1 - pa.threshold));
         trades.push({
           type: isSecondary ? 'SECONDARY_STOP_LOSS' : 'STOP_LOSS',
           date: day.date,
@@ -155,8 +156,8 @@ export function runBacktest(
           contracts: -contracts,
           totalContracts: 0,
           reason: isSecondary
-            ? `二次停損！(信號日 ${pa.signalDate}) 倖存倉價格從 ${pa.pricePeak.toFixed(0)} 再跌 ${(pa.drawdownPct * 100).toFixed(1)}% >= ${(pa.threshold * 100).toFixed(1)}%，全部清倉 ${contracts}口 @ ${close}`
-            : `停損出場！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，隔日 ${day.date} 以 ${close} 執行 (${contracts}口)`,
+            ? `二次停損！(信號日 ${pa.signalDate}) 倖存倉價格從 ${pa.pricePeak.toFixed(0)} 再跌 ${(pa.drawdownPct * 100).toFixed(1)}% >= ${(pa.threshold * 100).toFixed(1)}%，全部清倉 ${contracts}口 @ ${close} | 停損點位: ${stopTriggerPrice}`
+            : `停損出場！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，隔日 ${day.date} 以 ${close} 執行 (${contracts}口) | 停損點位: ${stopTriggerPrice}`,
           pnl: closePnl,
         });
 
