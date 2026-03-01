@@ -205,7 +205,12 @@ export default function BacktestPage() {
     setRefreshKey(k => k + 1);
   }, []);
 
-  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital); }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, refreshKey]);
+  const runBacktestNow = useCallback(() => {
+    fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital);
+  }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital]);
+
+  // 首次載入 + 上傳資料後自動跑一次
+  useEffect(() => { runBacktestNow(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
   if (loading) {
     return (
@@ -401,6 +406,17 @@ export default function BacktestPage() {
               {opt.active ? '\u2713 ' : ''}{opt.label}
             </button>
           ))}
+          <button
+            onClick={runBacktestNow}
+            disabled={loading}
+            style={{
+              padding: '6px 24px', borderRadius: 8, border: 'none', cursor: loading ? 'not-allowed' : 'pointer',
+              fontSize: 14, fontWeight: 700, transition: 'all 0.2s',
+              background: loading ? '#334155' : 'linear-gradient(135deg, #3b82f6, #2563eb)',
+              color: '#fff', boxShadow: loading ? 'none' : '0 2px 8px rgba(59,130,246,0.3)',
+              marginLeft: 8,
+            }}
+          >{loading ? '計算中...' : '執行回測'}</button>
         </div>
         <p style={{ color: '#94a3b8', marginTop: 8, fontSize: 14 }}>
           {config.contractType === 'TX' ? '大台' : '小台'} ({config.contractMultiplier}元/點) | 起始資金 {fmt.money(config.initialCapital)} |
