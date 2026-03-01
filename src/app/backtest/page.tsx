@@ -118,13 +118,13 @@ export default function BacktestPage() {
   const [error, setError] = useState<string | null>(null);
   const [contractType, setContractType] = useState<'TX' | 'MTX'>('TX');
   const [profitPerContract, setProfitPerContract] = useState(500_000);
-  const [initialCapital, setInitialCapital] = useState(2_000_000);
+  const [initialCapital, setInitialCapital] = useState(1_000_000);
   const [startDate, setStartDate] = useState('2015-01-05');
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
   const [maxContractsLimit, setMaxContractsLimit] = useState(0);
-  const [marginRatio, setMarginRatio] = useState(3.0);
+  const [marginRatio, setMarginRatio] = useState(1.0);
   const [dataInfo, setDataInfo] = useState<{ totalDays: number; dateRange: { from: string; to: string } | null } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
@@ -357,7 +357,7 @@ export default function BacktestPage() {
           <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
             <span style={{ color: '#94a3b8', fontSize: 13 }}>權益/保證金:</span>
             <div style={{ display: 'flex', gap: 3, background: 'rgba(30,41,59,0.8)', borderRadius: 6, padding: 2 }}>
-              {([1.5, 2.0, 3.0, 5.0] as const).map(v => (
+              {([1.0, 1.5, 2.0, 3.0, 5.0] as const).map(v => (
                 <button
                   key={v}
                   onClick={() => setMarginRatio(v)}
@@ -379,7 +379,7 @@ export default function BacktestPage() {
               onChange={e => setMarginRatio(Math.max(0.1, Number(e.target.value) || 3.0))}
               style={{
                 width: 52, background: 'rgba(30,41,59,0.8)', color: '#e2e8f0',
-                border: `1px solid ${![1.5,2.0,3.0,5.0].includes(marginRatio) ? '#06b6d4' : 'rgba(148,163,184,0.2)'}`,
+                border: `1px solid ${![1.0,1.5,2.0,3.0,5.0].includes(marginRatio) ? '#06b6d4' : 'rgba(148,163,184,0.2)'}`,
                 borderRadius: 6, padding: '3px 8px', fontSize: 12, textAlign: 'center',
               }}
             />

@@ -112,7 +112,7 @@ export const DEFAULT_CONFIG: BacktestConfig = {
   contractDrawdownPenalty: 0.05, // 5%
   reentryRecoveryPct: 0.20,     // 20%
   marginPerContract: 374_000,   // 每口維持保證金 374,000
-  marginRatio: 3.0,            // 權益/保證金 >= 300% 才允許持倉
+  marginRatio: 1.0,            // 權益/保證金比率，預設 100%（不額外限制）
   startDate: '2015-01-05',
   endDate: new Date().toISOString().split('T')[0],
 
