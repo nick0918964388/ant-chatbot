@@ -20,21 +20,22 @@ const fmt = {
   },
   pct: (v: number) => `${(v * 100).toFixed(2)}%`,
   price: (v: number) => v.toFixed(0),
-  date: (d: string) => dayjs(d).format('MM/DD'),
+  date: (d: string) => dayjs(d).format('YY/MM'),
   fullDate: (d: string) => dayjs(d).format('YYYY/MM/DD'),
 };
 
 // ============================================================
 // 自訂 Tooltip
 // ============================================================
-function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string }>; label?: string }) {
+function ChartTooltip({ active, payload, label }: { active?: boolean; payload?: Array<{ name: string; value: number; color: string; payload?: Record<string, unknown> }>; label?: string }) {
   if (!active || !payload?.length) return null;
+  const displayDate = (payload[0]?.payload?.fullDate as string) || label;
   return (
     <div style={{
       background: 'rgba(15, 23, 42, 0.95)', padding: '10px 14px', borderRadius: 8,
       border: '1px solid rgba(148,163,184,0.2)', fontSize: 13,
     }}>
-      <div style={{ color: '#94a3b8', marginBottom: 4 }}>{label}</div>
+      <div style={{ color: '#94a3b8', marginBottom: 4 }}>{displayDate}</div>
       {payload.map((p, i) => (
         <div key={i} style={{ color: p.color, margin: '2px 0' }}>
           {p.name}: <strong>{typeof p.value === 'number' && p.name.includes('率') ? fmt.pct(p.value) : typeof p.value === 'number' ? p.value.toLocaleString() : p.value}</strong>
@@ -193,7 +194,7 @@ export default function BacktestPage() {
   const ddData = snapshots.map(s => {
     if (s.equity > eqPeak) eqPeak = s.equity;
     const dd = eqPeak > 0 ? (eqPeak - s.equity) / eqPeak : 0;
-    return { date: fmt.date(s.date), drawdown: -dd };
+    return { date: fmt.date(s.date), fullDate: fmt.fullDate(s.date), drawdown: -dd };
   });
 
   const pnlColor = m.totalPnl >= 0 ? '#22c55e' : '#ef4444';
