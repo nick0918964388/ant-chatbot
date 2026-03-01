@@ -119,13 +119,15 @@ export function runBacktest(
   pricePeak = firstDay.close;
   roundEntryEquity = config.initialCapital;
 
+  const entryThreshold = calcDrawdownThreshold(initialContracts, false, config);
+  const entryStopPrice = Math.round(firstDay.close * (1 - entryThreshold));
   trades.push({
     type: 'ENTRY',
     date: firstDay.date,
     price: firstDay.close,
     contracts: initialContracts,
     totalContracts: initialContracts,
-    reason: `初始入場，買進${initialContracts}口 @ ${firstDay.close} (保證金: ${(initialContracts * config.marginPerContract).toLocaleString()}/${config.initialCapital.toLocaleString()})`,
+    reason: `初始入場，買進${initialContracts}口 @ ${firstDay.close} (保證金: ${(initialContracts * config.marginPerContract).toLocaleString()}/${config.initialCapital.toLocaleString()}) | 停損點位: ${entryStopPrice}`,
   });
 
   // === 逐日模擬 ===
@@ -198,7 +200,7 @@ export function runBacktest(
           price: close,
           contracts: -contractsToSell,
           totalContracts: remaining,
-          reason: `分批停損！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，賣出${contractsToSell}口，保留${remaining}口倖存倉 @ ${close}`,
+          reason: `分批停損！(信號日 ${pa.signalDate}) 價格從峰值 ${pa.pricePeak.toFixed(0)} 回撤 ${(pa.drawdownPct * 100).toFixed(1)}% >= 門檻 ${(pa.threshold * 100).toFixed(1)}% [${phaseLabel}]，賣出${contractsToSell}口，保留${remaining}口倖存倉 @ ${close} | 二次停損點位: ${Math.round(close * (1 - config.secondaryStopLossPct))}`,
           pnl: closePnl,
         });
 
@@ -242,13 +244,15 @@ export function runBacktest(
           if (contracts > maxContracts) maxContracts = contracts;
 
           const newMargin = contracts * config.marginPerContract;
+          const addThreshold = calcDrawdownThreshold(contracts, true, config);
+          const addStopPrice = Math.round(pricePeak * (1 - addThreshold));
           trades.push({
             type: 'ADD',
             date: day.date,
             price: close,
             contracts: addContracts,
             totalContracts: contracts,
-            reason: `獲利加碼！(信號日 ${pa.signalDate}) 累計獲利 ${((realizedPnl + unrealizedPnl) / 10000).toFixed(1)}萬，隔日加碼${addContracts}口 @ ${close}，共${contracts}口 (保證金: ${newMargin.toLocaleString()}/${Math.round(equity).toLocaleString()})`,
+            reason: `獲利加碼！(信號日 ${pa.signalDate}) 累計獲利 ${((realizedPnl + unrealizedPnl) / 10000).toFixed(1)}萬，隔日加碼${addContracts}口 @ ${close}，共${contracts}口 (保證金: ${newMargin.toLocaleString()}/${Math.round(equity).toLocaleString()}) | 停損點位: ${addStopPrice}`,
           });
         }
         pendingAction = null;
@@ -288,6 +292,8 @@ export function runBacktest(
           if (contracts > maxContracts) maxContracts = contracts;
 
           const usedMargin = contracts * config.marginPerContract;
+          const reentryThreshold = calcDrawdownThreshold(contracts, realizedPnl > 0, config);
+          const reentryStopPrice = Math.round(close * (1 - reentryThreshold));
           const tierLabel = config.tieredReentryEnabled && pa.tierIndex !== undefined
             ? `[Tier ${pa.tierIndex + 1}/${config.reentryTiers.length}] `
             : '';
@@ -297,7 +303,7 @@ export function runBacktest(
             price: close,
             contracts,
             totalContracts: contracts,
-            reason: `${tierLabel}重新入場！(信號日 ${pa.signalDate}) 價格從低點 ${pa.priceLow.toFixed(0)} 回漲 ${(pa.recoveryPct * 100).toFixed(1)}%，隔日買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()})`,
+            reason: `${tierLabel}重新入場！(信號日 ${pa.signalDate}) 價格從低點 ${pa.priceLow.toFixed(0)} 回漲 ${(pa.recoveryPct * 100).toFixed(1)}%，隔日買進${contracts}口 @ ${close} (保證金: ${usedMargin.toLocaleString()}/${Math.round(currentEquity).toLocaleString()}) | 停損點位: ${reentryStopPrice}`,
           });
 
           reentryCount++;

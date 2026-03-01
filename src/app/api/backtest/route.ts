@@ -146,7 +146,10 @@ export async function GET(request: Request) {
     }
 
     const result = runBacktest(priceData, config);
-    return NextResponse.json({ ...result, dataSource });
+    // priceData 不回傳前端，節省 ~250KB
+    // eslint-disable-next-line @typescript-eslint/no-unused-vars
+    const { priceData: _, ...responseData } = result;
+    return NextResponse.json({ ...responseData, dataSource });
   } catch (error) {
     console.error('Backtest API error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';

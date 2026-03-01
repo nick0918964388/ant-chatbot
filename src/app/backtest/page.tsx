@@ -1,6 +1,6 @@
 'use client';
 
-import React, { useEffect, useState, useCallback } from 'react';
+import React, { useEffect, useState, useCallback, useMemo } from 'react';
 import {
   LineChart, Line, XAxis, YAxis, Tooltip, ResponsiveContainer,
   CartesianGrid, ReferenceLine, Area, AreaChart, ComposedChart,
@@ -223,6 +223,34 @@ export default function BacktestPage() {
   // 首次載入 + 上傳資料後自動跑一次
   useEffect(() => { runBacktestNow(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
 
+  // useMemo 必須在所有 early return 之前（React hooks 規則）
+  const snapshots = result?.snapshots;
+  const trades = result?.trades;
+  const config = result?.config;
+  const m = result?.metrics;
+
+  const chartData = useMemo(() => snapshots?.map(s => ({
+    date: fmt.date(s.date),
+    fullDate: fmt.fullDate(s.date),
+    close: s.close,
+    equity: Math.round(s.equity),
+    contracts: s.contracts,
+    unrealizedPnl: Math.round(s.unrealizedPnl),
+    drawdownPct: s.priceFromPeak,
+    threshold: s.drawdownThreshold,
+    state: s.state,
+  })) ?? [], [snapshots]);
+
+  const ddData = useMemo(() => {
+    if (!snapshots || !config) return [];
+    let peak = config.initialCapital;
+    return snapshots.map(s => {
+      if (s.equity > peak) peak = s.equity;
+      const dd = peak > 0 ? (peak - s.equity) / peak : 0;
+      return { date: fmt.date(s.date), fullDate: fmt.fullDate(s.date), drawdown: -dd };
+    });
+  }, [snapshots, config]);
+
   if (loading) {
     return (
       <div style={containerStyle}>
@@ -234,7 +262,7 @@ export default function BacktestPage() {
     );
   }
 
-  if (error || !result) {
+  if (error || !result || !m || !config || !trades) {
     return (
       <div style={containerStyle}>
         <div style={{ textAlign: 'center', padding: '120px 0' }}>
@@ -245,29 +273,6 @@ export default function BacktestPage() {
       </div>
     );
   }
-
-  const { metrics: m, snapshots, trades, config } = result;
-
-  // 準備圖表資料
-  const chartData = snapshots.map(s => ({
-    date: fmt.date(s.date),
-    fullDate: fmt.fullDate(s.date),
-    close: s.close,
-    equity: Math.round(s.equity),
-    contracts: s.contracts,
-    unrealizedPnl: Math.round(s.unrealizedPnl),
-    drawdownPct: s.priceFromPeak,
-    threshold: s.drawdownThreshold,
-    state: s.state,
-  }));
-
-  // 權益回撤資料
-  let eqPeak = config.initialCapital;
-  const ddData = snapshots.map(s => {
-    if (s.equity > eqPeak) eqPeak = s.equity;
-    const dd = eqPeak > 0 ? (eqPeak - s.equity) / eqPeak : 0;
-    return { date: fmt.date(s.date), fullDate: fmt.fullDate(s.date), drawdown: -dd };
-  });
 
   const pnlColor = m.totalPnl >= 0 ? '#22c55e' : '#ef4444';
 
@@ -521,11 +526,10 @@ export default function BacktestPage() {
             <YAxis tick={{ fill: '#64748b', fontSize: 11 }} domain={['auto', 'auto']} />
             <Tooltip content={<ChartTooltip />} />
             <Line type="monotone" dataKey="close" stroke="#3b82f6" strokeWidth={2} dot={false} name="收盤價" />
-            {/* 交易標記 */}
-            {trades.map((t, i) => {
+            {/* 交易標記（僅顯示停損/追繳，避免 DOM 過多） */}
+            {trades.filter(t => t.type !== 'ADD' && t.type !== 'REENTRY').map((t, i) => {
               const color = t.type === 'STOP_LOSS' || t.type === 'SECONDARY_STOP_LOSS' ? '#ef4444'
                 : t.type === 'PARTIAL_STOP_LOSS' ? '#fb923c'
-                : t.type === 'ADD' ? '#22c55e'
                 : t.type === 'MARGIN_CALL' ? '#f59e0b'
                 : '#a855f7';
               return (
