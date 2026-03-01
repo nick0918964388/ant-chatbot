@@ -120,7 +120,14 @@ export default function BacktestPage() {
   const [profitPerContract, setProfitPerContract] = useState(500_000);
   const [initialCapital, setInitialCapital] = useState(1_000_000);
   const [startDate, setStartDate] = useState('2015-01-05');
-  const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
+  const [endDate, setEndDate] = useState('');
+
+  // 避免 SSR/client hydration 不一致
+  useEffect(() => {
+    if (!endDate) {
+      setEndDate(new Date().toISOString().split('T')[0]);
+    }
+  }, []); // eslint-disable-line react-hooks/exhaustive-deps
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
   const [maxContractsLimit, setMaxContractsLimit] = useState(0);
