@@ -525,7 +525,7 @@ export default function BacktestPage() {
             <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(chartData.length / 10)} />
             <YAxis tick={{ fill: '#64748b', fontSize: 11 }} domain={['auto', 'auto']} />
             <Tooltip content={<ChartTooltip />} />
-            <Line type="monotone" dataKey="close" stroke="#3b82f6" strokeWidth={2} dot={false} name="收盤價" />
+            <Line type="monotone" dataKey="close" stroke="#3b82f6" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#3b82f6' }} isAnimationActive={false} name="收盤價" />
             {/* 交易標記（僅顯示停損/追繳，避免 DOM 過多） */}
             {trades.filter(t => t.type !== 'ADD' && t.type !== 'REENTRY').map((t, i) => {
               const color = t.type === 'STOP_LOSS' || t.type === 'SECONDARY_STOP_LOSS' ? '#ef4444'
@@ -560,7 +560,7 @@ export default function BacktestPage() {
                 <stop offset="95%" stopColor="#22c55e" stopOpacity={0} />
               </linearGradient>
             </defs>
-            <Area type="monotone" dataKey="equity" stroke="#22c55e" fill="url(#eqGrad)" strokeWidth={2} name="權益" />
+            <Area type="monotone" dataKey="equity" stroke="#22c55e" fill="url(#eqGrad)" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#22c55e' }} isAnimationActive={false} name="權益" />
             <ReferenceLine y={config.initialCapital} stroke="#64748b" strokeDasharray="5 5" label={{ value: '初始資金', fill: '#64748b', fontSize: 11 }} />
           </AreaChart>
         </ResponsiveContainer>
@@ -574,7 +574,7 @@ export default function BacktestPage() {
             <XAxis dataKey="date" tick={{ fill: '#64748b', fontSize: 11 }} interval={Math.floor(chartData.length / 10)} />
             <YAxis tick={{ fill: '#64748b', fontSize: 11 }} allowDecimals={false} />
             <Tooltip content={<ChartTooltip />} />
-            <Bar dataKey="contracts" fill="#6366f1" name="持倉口數" opacity={0.7} />
+            <Bar dataKey="contracts" fill="#6366f1" name="持倉口數" opacity={0.7} isAnimationActive={false} />
           </ComposedChart>
         </ResponsiveContainer>
       </Section>
@@ -593,7 +593,7 @@ export default function BacktestPage() {
                 <stop offset="95%" stopColor="#ef4444" stopOpacity={0.3} />
               </linearGradient>
             </defs>
-            <Area type="monotone" dataKey="drawdown" stroke="#ef4444" fill="url(#ddGrad)" strokeWidth={2} name="回撤率" />
+            <Area type="monotone" dataKey="drawdown" stroke="#ef4444" fill="url(#ddGrad)" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#ef4444' }} isAnimationActive={false} name="回撤率" />
           </AreaChart>
         </ResponsiveContainer>
       </Section>
@@ -607,8 +607,8 @@ export default function BacktestPage() {
             <YAxis tick={{ fill: '#64748b', fontSize: 11 }} tickFormatter={(v: number) => `${(v * 100).toFixed(0)}%`} />
             <Tooltip content={<ChartTooltip />} />
             <Legend />
-            <Line type="stepAfter" dataKey="threshold" stroke="#f59e0b" strokeWidth={2} dot={false} name="停損門檻" strokeDasharray="5 5" />
-            <Line type="monotone" dataKey="drawdownPct" stroke="#ef4444" strokeWidth={1.5} dot={false} name="價格回撤" />
+            <Line type="stepAfter" dataKey="threshold" stroke="#f59e0b" strokeWidth={2} dot={false} activeDot={{ r: 4, fill: '#f59e0b' }} isAnimationActive={false} name="停損門檻" strokeDasharray="5 5" />
+            <Line type="monotone" dataKey="drawdownPct" stroke="#ef4444" strokeWidth={1.5} dot={false} activeDot={{ r: 4, fill: '#ef4444' }} isAnimationActive={false} name="價格回撤" />
           </LineChart>
         </ResponsiveContainer>
       </Section>
