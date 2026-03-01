@@ -3,6 +3,7 @@ import { runBacktest } from '@/lib/backtest/engine';
 import { DailyPrice, BacktestConfig, DEFAULT_CONFIG } from '@/lib/backtest/types';
 import { getFallbackData } from '@/lib/backtest/fallback-data';
 import { parseTAIFEXCsv } from '@/lib/backtest/taifex-csv-parser';
+import { loadAccumulatedData } from '@/lib/backtest/taifex-store';
 
 /**
  * 從 Yahoo Finance 取得台指加權指數歷史資料
@@ -114,16 +115,23 @@ export async function GET(request: Request) {
       initialCapital: searchParams.get('initialCapital'),
     });
 
-    // 嘗試從 Yahoo Finance 取得資料，失敗時使用內建歷史資料
+    // 優先使用累積的 TAIFEX 期貨數據，否則 Yahoo Finance，最後內建資料
     let priceData: DailyPrice[];
     let dataSource: string;
-    try {
-      priceData = await fetchTAIEXData(config.startDate, config.endDate);
-      dataSource = 'Yahoo Finance (^TWII)';
-    } catch {
-      console.log('Yahoo Finance unavailable, using built-in historical data');
-      priceData = getLocalData(config.startDate, config.endDate);
-      dataSource = '內建歷史資料 (基於 TWSE/Taipei Times/Focus Taiwan)';
+
+    const accumulated = loadAccumulatedData();
+    if (accumulated.prices.length > 0) {
+      priceData = accumulated.prices.filter(d => d.date >= config.startDate && d.date <= config.endDate);
+      dataSource = `TAIFEX 期貨合約 (${priceData.length} 筆, 累積 ${accumulated.totalDays} 日)`;
+    } else {
+      try {
+        priceData = await fetchTAIEXData(config.startDate, config.endDate);
+        dataSource = 'Yahoo Finance (^TWII)';
+      } catch {
+        console.log('Yahoo Finance unavailable, using built-in historical data');
+        priceData = getLocalData(config.startDate, config.endDate);
+        dataSource = '內建歷史資料 (基於 TWSE/Taipei Times/Focus Taiwan)';
+      }
     }
 
     if (priceData.length === 0) {
@@ -140,28 +148,34 @@ export async function GET(request: Request) {
 }
 
 /**
- * POST: 接收 TAIFEX CSV 資料進行回測
- * Body: { csvData: string, contractType, profitPerContract, ... }
+ * POST: 接收 TAIFEX 資料進行回測
+ * 支援兩種模式：
+ *   1. { priceData: DailyPrice[] }  — 前端已解析+累積的數據（推薦）
+ *   2. { csvData: string }          — 原始 CSV 文字（向後相容）
  */
 export async function POST(request: Request) {
   try {
     const body = await request.json();
-    const { csvData, ...params } = body;
-
-    if (!csvData || typeof csvData !== 'string') {
-      return NextResponse.json({ error: '缺少 csvData 欄位' }, { status: 400 });
-    }
+    const { csvData, priceData: rawPriceData, ...params } = body;
 
     const config = buildConfig(params);
-
-    // 解析 TAIFEX CSV → 取得最近月合約每日收盤價
     const contractFilter = config.contractType === 'MTX' ? 'MTX' : 'TX';
+
     let priceData: DailyPrice[];
-    try {
-      priceData = parseTAIFEXCsv(csvData, contractFilter);
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : 'CSV 解析失敗';
-      return NextResponse.json({ error: msg }, { status: 400 });
+
+    if (Array.isArray(rawPriceData) && rawPriceData.length > 0) {
+      // 模式1: 前端已解析的累積數據
+      priceData = rawPriceData;
+    } else if (csvData && typeof csvData === 'string') {
+      // 模式2: 原始 CSV
+      try {
+        priceData = parseTAIFEXCsv(csvData, contractFilter);
+      } catch (e) {
+        const msg = e instanceof Error ? e.message : 'CSV 解析失敗';
+        return NextResponse.json({ error: msg }, { status: 400 });
+      }
+    } else {
+      return NextResponse.json({ error: '缺少 priceData 或 csvData' }, { status: 400 });
     }
 
     // 按日期篩選
@@ -169,14 +183,14 @@ export async function POST(request: Request) {
 
     if (priceData.length === 0) {
       return NextResponse.json({
-        error: `所選日期範圍 (${config.startDate} ~ ${config.endDate}) 內無 ${contractFilter} 合約資料`,
+        error: `所選日期範圍 (${config.startDate} ~ ${config.endDate}) 內無資料`,
       }, { status: 400 });
     }
 
     const result = runBacktest(priceData, config);
     return NextResponse.json({
       ...result,
-      dataSource: `TAIFEX CSV (${contractFilter} 最近月合約, ${priceData.length} 筆)`,
+      dataSource: `TAIFEX (${contractFilter} 最近月合約, ${priceData.length} 筆)`,
     });
   } catch (error) {
     console.error('Backtest POST API error:', error);

@@ -123,41 +123,36 @@ export default function BacktestPage() {
   const [endDate, setEndDate] = useState(() => new Date().toISOString().split('T')[0]);
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
-  const [csvData, setCsvData] = useState<string | null>(null);
-  const [csvFileName, setCsvFileName] = useState<string | null>(null);
+  const [dataInfo, setDataInfo] = useState<{ totalDays: number; dateRange: { from: string; to: string } | null } | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const [uploadMsg, setUploadMsg] = useState<string | null>(null);
+  const [refreshKey, setRefreshKey] = useState(0);
 
-  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number, csv?: string | null) => {
+  // 查詢累積數據狀態
+  const fetchDataInfo = useCallback(async () => {
+    try {
+      const res = await fetch('/api/backtest/data');
+      if (res.ok) {
+        const info = await res.json();
+        setDataInfo(info);
+      }
+    } catch { /* ignore */ }
+  }, []);
+
+  useEffect(() => { fetchDataInfo(); }, [fetchDataInfo]);
+
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number) => {
     setLoading(true);
     setError(null);
     try {
-      let res: Response;
-      if (csv) {
-        // POST: 使用上傳的 TAIFEX CSV
-        res = await fetch('/api/backtest', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({
-            csvData: csv,
-            contractType: ct,
-            profitPerContract: ppc ? String(ppc) : undefined,
-            startDate: sd,
-            endDate: ed,
-            partialStopLoss: psl ? 'true' : undefined,
-            tieredReentry: tr ? 'true' : undefined,
-            initialCapital: ic ? String(ic) : undefined,
-          }),
-        });
-      } else {
-        // GET: Yahoo Finance / 內建資料
-        const params = new URLSearchParams({ contractType: ct });
-        if (ppc) params.set('profitPerContract', String(ppc));
-        if (sd) params.set('startDate', sd);
-        if (ed) params.set('endDate', ed);
-        if (psl) params.set('partialStopLoss', 'true');
-        if (tr) params.set('tieredReentry', 'true');
-        if (ic) params.set('initialCapital', String(ic));
-        res = await fetch(`/api/backtest?${params}`);
-      }
+      const params = new URLSearchParams({ contractType: ct });
+      if (ppc) params.set('profitPerContract', String(ppc));
+      if (sd) params.set('startDate', sd);
+      if (ed) params.set('endDate', ed);
+      if (psl) params.set('partialStopLoss', 'true');
+      if (tr) params.set('tieredReentry', 'true');
+      if (ic) params.set('initialCapital', String(ic));
+      const res = await fetch(`/api/backtest?${params}`);
       if (!res.ok) {
         const err = await res.json();
         throw new Error(err.error || 'API error');
@@ -171,20 +166,41 @@ export default function BacktestPage() {
     }
   }, []);
 
-  const handleCsvUpload = useCallback((e: React.ChangeEvent<HTMLInputElement>) => {
+  // 上傳 CSV → 伺服器端累積
+  const handleCsvUpload = useCallback(async (e: React.ChangeEvent<HTMLInputElement>) => {
     const file = e.target.files?.[0];
     if (!file) return;
-    setCsvFileName(file.name);
-    const reader = new FileReader();
-    reader.onload = (ev) => {
-      const text = ev.target?.result as string;
-      setCsvData(text);
-    };
-    reader.readAsText(file, 'utf-8');
     e.target.value = '';
+    setUploading(true);
+    setUploadMsg(null);
+    try {
+      const text = await file.text();
+      const res = await fetch('/api/backtest/data', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ csvData: text, contractType }),
+      });
+      const data = await res.json();
+      if (!res.ok) throw new Error(data.error);
+      setUploadMsg(`${file.name}: ${data.message}`);
+      setDataInfo({ totalDays: data.totalDays, dateRange: data.dateRange });
+      setRefreshKey(k => k + 1); // 觸發回測重跑
+    } catch (err) {
+      setUploadMsg(`上傳失敗: ${err instanceof Error ? err.message : '未知錯誤'}`);
+    } finally {
+      setUploading(false);
+    }
+  }, [contractType]);
+
+  // 清除所有累積資料
+  const handleClearData = useCallback(async () => {
+    await fetch('/api/backtest/data', { method: 'DELETE' });
+    setDataInfo({ totalDays: 0, dateRange: null });
+    setUploadMsg(null);
+    setRefreshKey(k => k + 1);
   }, []);
 
-  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, csvData); }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, csvData]);
+  useEffect(() => { fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital); }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, refreshKey]);
 
   if (loading) {
     return (
@@ -331,28 +347,33 @@ export default function BacktestPage() {
             />
           </div>
         </div>
-        {/* CSV 上傳 */}
+        {/* 數據來源 & CSV 上傳 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 10, marginTop: 10, flexWrap: 'wrap' }}>
-          <span style={{ color: '#94a3b8', fontSize: 13 }}>數據來源:</span>
-          {csvData ? (
+          <span style={{ color: '#94a3b8', fontSize: 13 }}>期貨數據:</span>
+          {dataInfo && dataInfo.totalDays > 0 ? (
             <>
               <span style={{ color: '#22c55e', fontSize: 12, fontWeight: 600, background: 'rgba(34,197,94,0.1)', padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(34,197,94,0.3)' }}>
-                TAIFEX CSV: {csvFileName}
+                TAIFEX {dataInfo.totalDays} 交易日 ({dataInfo.dateRange?.from} ~ {dataInfo.dateRange?.to})
               </span>
+              <label style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(59,130,246,0.3)', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: uploading ? 0.5 : 1 }}>
+                {uploading ? '上傳中...' : '追加 CSV'}
+                <input type="file" accept=".csv" onChange={handleCsvUpload} disabled={uploading} style={{ display: 'none' }} />
+              </label>
               <button
-                onClick={() => { setCsvData(null); setCsvFileName(null); }}
+                onClick={handleClearData}
                 style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(239,68,68,0.3)', background: 'rgba(239,68,68,0.1)', color: '#ef4444', cursor: 'pointer', fontSize: 12 }}
-              >清除</button>
+              >清除全部</button>
             </>
           ) : (
             <>
               <span style={{ color: '#64748b', fontSize: 12 }}>Yahoo Finance (^TWII)</span>
-              <label style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(59,130,246,0.3)', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer', fontSize: 12, fontWeight: 600 }}>
-                上傳期交所 CSV
-                <input type="file" accept=".csv" onChange={handleCsvUpload} style={{ display: 'none' }} />
+              <label style={{ padding: '3px 10px', borderRadius: 6, border: '1px solid rgba(59,130,246,0.3)', background: 'rgba(59,130,246,0.1)', color: '#3b82f6', cursor: 'pointer', fontSize: 12, fontWeight: 600, opacity: uploading ? 0.5 : 1 }}>
+                {uploading ? '上傳中...' : '上傳期交所 CSV'}
+                <input type="file" accept=".csv" onChange={handleCsvUpload} disabled={uploading} style={{ display: 'none' }} />
               </label>
             </>
           )}
+          {uploadMsg && <span style={{ color: '#94a3b8', fontSize: 11 }}>{uploadMsg}</span>}
         </div>
         {/* 優化策略開關 */}
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, marginTop: 10, flexWrap: 'wrap' }}>
