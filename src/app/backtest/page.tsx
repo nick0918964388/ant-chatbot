@@ -124,6 +124,7 @@ export default function BacktestPage() {
   const [partialStopLoss, setPartialStopLoss] = useState(false);
   const [tieredReentry, setTieredReentry] = useState(false);
   const [maxContractsLimit, setMaxContractsLimit] = useState(0);
+  const [marginRatio, setMarginRatio] = useState(3.0);
   const [dataInfo, setDataInfo] = useState<{ totalDays: number; dateRange: { from: string; to: string } | null } | null>(null);
   const [uploading, setUploading] = useState(false);
   const [uploadMsg, setUploadMsg] = useState<string | null>(null);
@@ -142,7 +143,7 @@ export default function BacktestPage() {
 
   useEffect(() => { fetchDataInfo(); }, [fetchDataInfo]);
 
-  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number, mcl?: number) => {
+  const fetchBacktest = useCallback(async (ct: 'TX' | 'MTX', ppc?: number, sd?: string, ed?: string, psl?: boolean, tr?: boolean, ic?: number, mcl?: number, mr?: number) => {
     setLoading(true);
     setError(null);
     try {
@@ -154,6 +155,7 @@ export default function BacktestPage() {
       if (tr) params.set('tieredReentry', 'true');
       if (ic) params.set('initialCapital', String(ic));
       if (mcl && mcl > 0) params.set('maxContractsLimit', String(mcl));
+      if (mr && mr > 0) params.set('marginRatio', String(mr));
       const res = await fetch(`/api/backtest?${params}`);
       if (!res.ok) {
         const err = await res.json();
@@ -208,8 +210,8 @@ export default function BacktestPage() {
   }, []);
 
   const runBacktestNow = useCallback(() => {
-    fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, maxContractsLimit);
-  }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, maxContractsLimit]);
+    fetchBacktest(contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, maxContractsLimit, marginRatio);
+  }, [fetchBacktest, contractType, profitPerContract, startDate, endDate, partialStopLoss, tieredReentry, initialCapital, maxContractsLimit, marginRatio]);
 
   // 首次載入 + 上傳資料後自動跑一次
   useEffect(() => { runBacktestNow(); }, [refreshKey]); // eslint-disable-line react-hooks/exhaustive-deps
@@ -348,6 +350,36 @@ export default function BacktestPage() {
               style={{
                 width: 52, background: 'rgba(30,41,59,0.8)', color: '#e2e8f0',
                 border: `1px solid ${maxContractsLimit > 0 && ![0,2,3,5,10].includes(maxContractsLimit) ? '#f59e0b' : 'rgba(148,163,184,0.2)'}`,
+                borderRadius: 6, padding: '3px 8px', fontSize: 12, textAlign: 'center',
+              }}
+            />
+          </div>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <span style={{ color: '#94a3b8', fontSize: 13 }}>權益/保證金:</span>
+            <div style={{ display: 'flex', gap: 3, background: 'rgba(30,41,59,0.8)', borderRadius: 6, padding: 2 }}>
+              {([1.5, 2.0, 3.0, 5.0] as const).map(v => (
+                <button
+                  key={v}
+                  onClick={() => setMarginRatio(v)}
+                  style={{
+                    padding: '4px 12px', borderRadius: 4, border: 'none', cursor: 'pointer',
+                    fontSize: 12, fontWeight: 600, transition: 'all 0.2s',
+                    background: marginRatio === v ? '#06b6d4' : 'transparent',
+                    color: marginRatio === v ? '#fff' : '#94a3b8',
+                  }}
+                >{(v * 100).toFixed(0)}%</button>
+              ))}
+            </div>
+            <input
+              type="number"
+              min={1}
+              max={20}
+              step={0.1}
+              value={marginRatio}
+              onChange={e => setMarginRatio(Math.max(0.1, Number(e.target.value) || 3.0))}
+              style={{
+                width: 52, background: 'rgba(30,41,59,0.8)', color: '#e2e8f0',
+                border: `1px solid ${![1.5,2.0,3.0,5.0].includes(marginRatio) ? '#06b6d4' : 'rgba(148,163,184,0.2)'}`,
                 borderRadius: 6, padding: '3px 8px', fontSize: 12, textAlign: 'center',
               }}
             />

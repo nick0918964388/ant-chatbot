@@ -25,7 +25,8 @@ function calcTargetContracts(realizedPnl: number, config: BacktestConfig): numbe
  */
 function calcMaxContractsByMargin(equity: number, config: BacktestConfig): number {
   if (equity <= 0) return 0;
-  return Math.floor(equity / config.marginPerContract);
+  const marginPerContract = config.marginPerContract * config.marginRatio;
+  return Math.floor(equity / marginPerContract);
 }
 
 /**
