@@ -2,6 +2,7 @@ import { NextResponse } from 'next/server';
 import { runBacktest } from '@/lib/backtest/engine';
 import { DailyPrice, BacktestConfig, DEFAULT_CONFIG } from '@/lib/backtest/types';
 import { getFallbackData } from '@/lib/backtest/fallback-data';
+import { parseTAIFEXCsv } from '@/lib/backtest/taifex-csv-parser';
 
 /**
  * 從 Yahoo Finance 取得台指加權指數歷史資料
@@ -69,26 +70,49 @@ function getLocalData(startDate: string, endDate: string): DailyPrice[] {
   return allData.filter(d => d.date >= startDate && d.date <= endDate);
 }
 
+/**
+ * 建構回測設定（GET & POST 共用）
+ */
+function buildConfig(params: {
+  contractType?: string | null;
+  profitPerContract?: string | null;
+  startDate?: string | null;
+  endDate?: string | null;
+  partialStopLoss?: string | null;
+  tieredReentry?: string | null;
+  initialCapital?: string | null;
+}): BacktestConfig {
+  const isMTX = params.contractType === 'MTX';
+  return {
+    ...DEFAULT_CONFIG,
+    startDate: params.startDate || DEFAULT_CONFIG.startDate,
+    endDate: params.endDate || DEFAULT_CONFIG.endDate,
+    contractType: isMTX ? 'MTX' : 'TX',
+    contractMultiplier: isMTX ? 50 : 200,
+    marginPerContract: isMTX ? 95_000 : 374_000,
+    initialCapital: Number(params.initialCapital) || DEFAULT_CONFIG.initialCapital,
+    profitPerContract: Number(params.profitPerContract) || DEFAULT_CONFIG.profitPerContract,
+    partialStopLossEnabled: params.partialStopLoss === 'true',
+    tieredReentryEnabled: params.tieredReentry === 'true',
+  };
+}
+
+/**
+ * GET: 使用 Yahoo Finance 或內建資料
+ */
 export async function GET(request: Request) {
   try {
     const { searchParams } = new URL(request.url);
 
-    const isMTX = searchParams.get('contractType') === 'MTX';
-    const profitPerContract = Number(searchParams.get('profitPerContract')) || DEFAULT_CONFIG.profitPerContract;
-    const partialStopLossEnabled = searchParams.get('partialStopLoss') === 'true';
-    const tieredReentryEnabled = searchParams.get('tieredReentry') === 'true';
-    const config: BacktestConfig = {
-      ...DEFAULT_CONFIG,
-      startDate: searchParams.get('startDate') || DEFAULT_CONFIG.startDate,
-      endDate: searchParams.get('endDate') || DEFAULT_CONFIG.endDate,
-      contractType: isMTX ? 'MTX' : 'TX',
-      contractMultiplier: isMTX ? 50 : 200,
-      marginPerContract: isMTX ? 95_000 : 374_000,
-      initialCapital: Number(searchParams.get('initialCapital')) || DEFAULT_CONFIG.initialCapital,
-      profitPerContract,
-      partialStopLossEnabled,
-      tieredReentryEnabled,
-    };
+    const config = buildConfig({
+      contractType: searchParams.get('contractType'),
+      profitPerContract: searchParams.get('profitPerContract'),
+      startDate: searchParams.get('startDate'),
+      endDate: searchParams.get('endDate'),
+      partialStopLoss: searchParams.get('partialStopLoss'),
+      tieredReentry: searchParams.get('tieredReentry'),
+      initialCapital: searchParams.get('initialCapital'),
+    });
 
     // 嘗試從 Yahoo Finance 取得資料，失敗時使用內建歷史資料
     let priceData: DailyPrice[];
@@ -106,12 +130,56 @@ export async function GET(request: Request) {
       return NextResponse.json({ error: '無法取得價格資料' }, { status: 400 });
     }
 
-    // 執行回測
     const result = runBacktest(priceData, config);
-
     return NextResponse.json({ ...result, dataSource });
   } catch (error) {
     console.error('Backtest API error:', error);
+    const message = error instanceof Error ? error.message : 'Unknown error';
+    return NextResponse.json({ error: message }, { status: 500 });
+  }
+}
+
+/**
+ * POST: 接收 TAIFEX CSV 資料進行回測
+ * Body: { csvData: string, contractType, profitPerContract, ... }
+ */
+export async function POST(request: Request) {
+  try {
+    const body = await request.json();
+    const { csvData, ...params } = body;
+
+    if (!csvData || typeof csvData !== 'string') {
+      return NextResponse.json({ error: '缺少 csvData 欄位' }, { status: 400 });
+    }
+
+    const config = buildConfig(params);
+
+    // 解析 TAIFEX CSV → 取得最近月合約每日收盤價
+    const contractFilter = config.contractType === 'MTX' ? 'MTX' : 'TX';
+    let priceData: DailyPrice[];
+    try {
+      priceData = parseTAIFEXCsv(csvData, contractFilter);
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : 'CSV 解析失敗';
+      return NextResponse.json({ error: msg }, { status: 400 });
+    }
+
+    // 按日期篩選
+    priceData = priceData.filter(d => d.date >= config.startDate && d.date <= config.endDate);
+
+    if (priceData.length === 0) {
+      return NextResponse.json({
+        error: `所選日期範圍 (${config.startDate} ~ ${config.endDate}) 內無 ${contractFilter} 合約資料`,
+      }, { status: 400 });
+    }
+
+    const result = runBacktest(priceData, config);
+    return NextResponse.json({
+      ...result,
+      dataSource: `TAIFEX CSV (${contractFilter} 最近月合約, ${priceData.length} 筆)`,
+    });
+  } catch (error) {
+    console.error('Backtest POST API error:', error);
     const message = error instanceof Error ? error.message : 'Unknown error';
     return NextResponse.json({ error: message }, { status: 500 });
   }
