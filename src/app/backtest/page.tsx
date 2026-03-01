@@ -338,6 +338,19 @@ export default function BacktestPage() {
                 >{v === 0 ? '不限' : `${v}口`}</button>
               ))}
             </div>
+            <input
+              type="number"
+              min={0}
+              max={99}
+              value={maxContractsLimit || ''}
+              placeholder="自訂"
+              onChange={e => setMaxContractsLimit(Math.max(0, Number(e.target.value) || 0))}
+              style={{
+                width: 52, background: 'rgba(30,41,59,0.8)', color: '#e2e8f0',
+                border: `1px solid ${maxContractsLimit > 0 && ![0,2,3,5,10].includes(maxContractsLimit) ? '#f59e0b' : 'rgba(148,163,184,0.2)'}`,
+                borderRadius: 6, padding: '3px 8px', fontSize: 12, textAlign: 'center',
+              }}
+            />
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 6, flexWrap: 'wrap' }}>
             <span style={{ color: '#94a3b8', fontSize: 13 }}>期間:</span>
