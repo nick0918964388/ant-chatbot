@@ -62,6 +62,19 @@ export interface BacktestMetrics {
   startDate: string;
   endDate: string;
   tradingDays: number;
+
+  // 量化績效指標
+  cagr: number;                  // 年化報酬率 (Compound Annual Growth Rate)
+  alpha: number;                 // Alpha (策略 CAGR - 基準 CAGR)
+  benchmarkReturn: number;       // 基準報酬率 (買進持有)
+  annualizedVolatility: number;  // 年化波動率
+  var95: number;                 // Value at Risk (95%)
+  sharpeRatio: number;           // Sharpe Ratio
+  sortinoRatio: number;          // Sortino Ratio
+  calmarRatio: number;           // Calmar Ratio
+  profitLossRatio: number;       // 盈虧比 (avgWin / avgLoss)
+  expectancy: number;            // 期望值
+  profitFactor: number;          // Profit Factor (grossProfit / grossLoss)
 }
 
 export interface ReentryTier {

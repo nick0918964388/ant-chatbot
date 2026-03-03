@@ -10,6 +10,28 @@ import {
   DEFAULT_CONFIG,
 } from './types';
 
+// 台灣定存利率（無風險利率）
+const RISK_FREE_RATE = 0.015;
+
+/** 計算標準差 */
+function stdDev(arr: number[]): number {
+  if (arr.length < 2) return 0;
+  const mean = arr.reduce((a, b) => a + b, 0) / arr.length;
+  const variance = arr.reduce((sum, v) => sum + (v - mean) ** 2, 0) / (arr.length - 1);
+  return Math.sqrt(variance);
+}
+
+/** 計算百分位數 (線性插值) */
+function percentile(arr: number[], pct: number): number {
+  if (arr.length === 0) return 0;
+  const sorted = [...arr].sort((a, b) => a - b);
+  const idx = (pct / 100) * (sorted.length - 1);
+  const lo = Math.floor(idx);
+  const hi = Math.ceil(idx);
+  if (lo === hi) return sorted[lo];
+  return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+}
+
 /**
  * 計算應持有的口數（基於已實現獲利）
  * 初始1口，每獲利 profitPerContract 加碼1口
@@ -573,8 +595,73 @@ export function runBacktest(
   const winRounds = roundPnls.filter(p => p > 0).length;
   const winRate = roundPnls.length > 0 ? winRounds / roundPnls.length : (finalEquity > config.initialCapital ? 1 : 0);
 
+  // === 量化績效指標計算 ===
+  const tradingDays = priceData.length;
+
+  // 日報酬率（基於權益曲線）
+  const dailyReturns: number[] = [];
+  for (let i = 1; i < snapshots.length; i++) {
+    const prev = snapshots[i - 1].equity;
+    if (prev > 0) {
+      dailyReturns.push((snapshots[i].equity - prev) / prev);
+    }
+  }
+
+  // 年化報酬率 (CAGR)
+  const totalReturn = (finalEquity - config.initialCapital) / config.initialCapital;
+  const cagr = tradingDays > 0
+    ? Math.pow(finalEquity / config.initialCapital, 252 / tradingDays) - 1
+    : 0;
+
+  // 基準報酬率（買進持有指數）
+  const firstClose = priceData[0].close;
+  const lastClose = priceData[priceData.length - 1].close;
+  const benchmarkReturn = firstClose > 0 ? (lastClose - firstClose) / firstClose : 0;
+  const benchmarkCAGR = tradingDays > 0
+    ? Math.pow(1 + benchmarkReturn, 252 / tradingDays) - 1
+    : 0;
+
+  // Alpha
+  const alpha = cagr - benchmarkCAGR;
+
+  // 年化波動率
+  const annualizedVolatility = stdDev(dailyReturns) * Math.sqrt(252);
+
+  // VaR (95%) — 日報酬的第 5 百分位數
+  const var95 = percentile(dailyReturns, 5);
+
+  // Sharpe Ratio
+  const sharpeRatio = annualizedVolatility > 0
+    ? (cagr - RISK_FREE_RATE) / annualizedVolatility
+    : 0;
+
+  // Sortino Ratio（僅用下行波動率）
+  const downsideReturns = dailyReturns.filter(r => r < 0);
+  const downsideDeviation = downsideReturns.length > 0
+    ? stdDev(downsideReturns) * Math.sqrt(252)
+    : 0;
+  const sortinoRatio = downsideDeviation > 0
+    ? (cagr - RISK_FREE_RATE) / downsideDeviation
+    : 0;
+
+  // Calmar Ratio
+  const calmarRatio = maxDrawdownPct > 0 ? cagr / maxDrawdownPct : 0;
+
+  // 盈虧比、期望值、Profit Factor（基於 roundPnls）
+  const winPnls = roundPnls.filter(p => p > 0);
+  const lossPnls = roundPnls.filter(p => p < 0);
+  const avgWin = winPnls.length > 0 ? winPnls.reduce((a, b) => a + b, 0) / winPnls.length : 0;
+  const avgLoss = lossPnls.length > 0 ? Math.abs(lossPnls.reduce((a, b) => a + b, 0) / lossPnls.length) : 0;
+  const profitLossRatio = avgLoss > 0 ? avgWin / avgLoss : 0;
+  const expectancy = roundPnls.length > 0
+    ? winRate * avgWin - (1 - winRate) * avgLoss
+    : 0;
+  const grossProfit = winPnls.reduce((a, b) => a + b, 0);
+  const grossLoss = Math.abs(lossPnls.reduce((a, b) => a + b, 0));
+  const profitFactor = grossLoss > 0 ? grossProfit / grossLoss : 0;
+
   const metrics: BacktestMetrics = {
-    totalReturn: (finalEquity - config.initialCapital) / config.initialCapital,
+    totalReturn,
     totalPnl: finalEquity - config.initialCapital,
     finalEquity,
     maxEquity: equityPeak,
@@ -590,7 +677,19 @@ export function runBacktest(
     winRate,
     startDate: priceData[0].date,
     endDate: priceData[priceData.length - 1].date,
-    tradingDays: priceData.length,
+    tradingDays,
+    // 量化績效指標
+    cagr,
+    alpha,
+    benchmarkReturn,
+    annualizedVolatility,
+    var95,
+    sharpeRatio,
+    sortinoRatio,
+    calmarRatio,
+    profitLossRatio,
+    expectancy,
+    profitFactor,
   };
 
   return {

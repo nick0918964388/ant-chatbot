@@ -7,6 +7,7 @@ import {
   Bar, Legend,
 } from 'recharts';
 import dayjs from 'dayjs';
+import { Tabs } from 'antd';
 import type { BacktestResult, Trade } from '@/lib/backtest/types';
 
 // ============================================================
@@ -19,6 +20,8 @@ const fmt = {
     return v.toLocaleString();
   },
   pct: (v: number) => `${(v * 100).toFixed(2)}%`,
+  pctSigned: (v: number) => `${v >= 0 ? '+' : ''}${(v * 100).toFixed(2)}%`,
+  ratio: (v: number) => v.toFixed(2),
   price: (v: number) => v.toFixed(0),
   date: (d: string) => dayjs(d).format('YY/MM'),
   fullDate: (d: string) => dayjs(d).format('YYYY/MM/DD'),
@@ -278,6 +281,14 @@ export default function BacktestPage() {
 
   return (
     <div style={containerStyle}>
+      {/* 深色主題 Tabs 樣式覆蓋 */}
+      <style>{`
+        .backtest-tabs .ant-tabs-tab { color: #94a3b8 !important; }
+        .backtest-tabs .ant-tabs-tab:hover { color: #e2e8f0 !important; }
+        .backtest-tabs .ant-tabs-tab-active .ant-tabs-tab-btn { color: #3b82f6 !important; }
+        .backtest-tabs .ant-tabs-ink-bar { background: #3b82f6 !important; }
+        .backtest-tabs .ant-tabs-nav::before { border-color: rgba(148,163,184,0.15) !important; }
+      `}</style>
       {/* 標題 + 合約切換 */}
       <div style={{ marginBottom: 32 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 16, flexWrap: 'wrap' }}>
@@ -506,16 +517,76 @@ export default function BacktestPage() {
         </p>
       </div>
 
-      {/* 指標卡片 */}
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12, marginBottom: 32 }}>
-        <MetricCard label="總報酬率" value={fmt.pct(m.totalReturn)} color={pnlColor} sub={`損益 ${m.totalPnl >= 0 ? '+' : ''}${fmt.money(m.totalPnl)}`} />
-        <MetricCard label="最終權益" value={fmt.money(m.finalEquity)} sub={`最高 ${fmt.money(m.maxEquity)}`} />
-        <MetricCard label="最大回撤" value={fmt.pct(m.maxDrawdownPct)} color="#ef4444" sub={`金額 ${fmt.money(m.maxDrawdown)}`} />
-        <MetricCard label="交易天數" value={`${m.tradingDays}`} sub={`${m.totalTrades} 筆交易`} />
-        <MetricCard label="停損/追繳" value={`${m.stopLossCount + m.partialStopLossCount}/${m.marginCallCount}`} color="#f59e0b"
-          sub={`${m.partialStopLossCount > 0 ? `分批${m.partialStopLossCount} 二次${m.secondaryStopLossCount} | ` : ''}重入場 ${m.reentryCount} 次`} />
-        <MetricCard label="最大持倉" value={`${m.maxContracts} 口`} sub={`保證金 ${fmt.money(m.maxContracts * config.marginPerContract)}`} />
-      </div>
+      {/* 指標分頁 */}
+      <Tabs
+        className="backtest-tabs"
+        defaultActiveKey="summary"
+        style={{ marginBottom: 32 }}
+        tabBarStyle={{
+          borderBottom: '1px solid rgba(148,163,184,0.15)',
+          marginBottom: 16,
+        }}
+        items={[
+          {
+            key: 'summary',
+            label: <span style={{ color: 'inherit', fontSize: 14, fontWeight: 600 }}>摘要指標</span>,
+            children: (
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                <MetricCard label="總報酬率" value={fmt.pct(m.totalReturn)} color={pnlColor} sub={`損益 ${m.totalPnl >= 0 ? '+' : ''}${fmt.money(m.totalPnl)}`} />
+                <MetricCard label="最終權益" value={fmt.money(m.finalEquity)} sub={`最高 ${fmt.money(m.maxEquity)}`} />
+                <MetricCard label="最大回撤" value={fmt.pct(m.maxDrawdownPct)} color="#ef4444" sub={`金額 ${fmt.money(m.maxDrawdown)}`} />
+                <MetricCard label="交易天數" value={`${m.tradingDays}`} sub={`${m.totalTrades} 筆交易`} />
+                <MetricCard label="停損/追繳" value={`${m.stopLossCount + m.partialStopLossCount}/${m.marginCallCount}`} color="#f59e0b"
+                  sub={`${m.partialStopLossCount > 0 ? `分批${m.partialStopLossCount} 二次${m.secondaryStopLossCount} | ` : ''}重入場 ${m.reentryCount} 次`} />
+                <MetricCard label="最大持倉" value={`${m.maxContracts} 口`} sub={`保證金 ${fmt.money(m.maxContracts * config.marginPerContract)}`} />
+              </div>
+            ),
+          },
+          {
+            key: 'quant',
+            label: <span style={{ color: 'inherit', fontSize: 14, fontWeight: 600 }}>量化績效</span>,
+            children: (
+              <div>
+                {/* 報酬類 */}
+                <div style={{ marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 8, marginTop: 0, letterSpacing: 1 }}>報酬類</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    <MetricCard label="年化報酬率 (CAGR)" value={fmt.pctSigned(m.cagr)} color={m.cagr >= 0 ? '#22c55e' : '#ef4444'} />
+                    <MetricCard label="Alpha" value={fmt.pctSigned(m.alpha)} color={m.alpha >= 0 ? '#22c55e' : '#ef4444'} sub={`基準報酬 ${fmt.pctSigned(m.benchmarkReturn)}`} />
+                  </div>
+                </div>
+                {/* 風險類 */}
+                <div style={{ marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 8, marginTop: 0, letterSpacing: 1 }}>風險類</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    <MetricCard label="年化波動率" value={fmt.pct(m.annualizedVolatility)} color="#f59e0b" />
+                    <MetricCard label="VaR (95%)" value={fmt.pctSigned(m.var95)} color="#ef4444" sub="單日最大預期損失" />
+                  </div>
+                </div>
+                {/* 風險調整報酬 */}
+                <div style={{ marginBottom: 16 }}>
+                  <h3 style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 8, marginTop: 0, letterSpacing: 1 }}>風險調整報酬</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    <MetricCard label="Sharpe Ratio" value={fmt.ratio(m.sharpeRatio)} color={m.sharpeRatio >= 1 ? '#22c55e' : '#f59e0b'} sub="無風險利率 1.5%" />
+                    <MetricCard label="Sortino Ratio" value={fmt.ratio(m.sortinoRatio)} color={m.sortinoRatio >= 1 ? '#22c55e' : '#f59e0b'} sub="僅計下行風險" />
+                    <MetricCard label="Calmar Ratio" value={fmt.ratio(m.calmarRatio)} color={m.calmarRatio >= 1 ? '#22c55e' : '#f59e0b'} sub="CAGR / 最大回撤" />
+                  </div>
+                </div>
+                {/* 交易統計 */}
+                <div>
+                  <h3 style={{ fontSize: 13, fontWeight: 600, color: '#94a3b8', marginBottom: 8, marginTop: 0, letterSpacing: 1 }}>交易統計</h3>
+                  <div style={{ display: 'flex', flexWrap: 'wrap', gap: 12 }}>
+                    <MetricCard label="勝率" value={fmt.pct(m.winRate)} color={m.winRate >= 0.5 ? '#22c55e' : '#ef4444'} />
+                    <MetricCard label="盈虧比" value={fmt.ratio(m.profitLossRatio)} color={m.profitLossRatio >= 1 ? '#22c55e' : '#ef4444'} sub="平均獲利 / 平均虧損" />
+                    <MetricCard label="期望值" value={fmt.money(m.expectancy)} color={m.expectancy >= 0 ? '#22c55e' : '#ef4444'} sub="每輪交易預期損益" />
+                    <MetricCard label="Profit Factor" value={fmt.ratio(m.profitFactor)} color={m.profitFactor >= 1 ? '#22c55e' : '#ef4444'} sub="總獲利 / 總虧損" />
+                  </div>
+                </div>
+              </div>
+            ),
+          },
+        ]}
+      />
 
       {/* 台指加權指數走勢 + 交易信號 */}
       <Section title="台指加權指數走勢">
